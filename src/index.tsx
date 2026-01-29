@@ -1472,32 +1472,484 @@ app.get('/admin', async (c) => {
     
     function loadAdminDashboard() {
       document.getElementById('adminContent').innerHTML = \`
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div class="bg-white p-6 rounded-lg shadow-lg text-center">
-            <i class="fas fa-box text-5xl mb-4" style="color: var(--ocean);"></i>
-            <h3 class="text-xl font-semibold mb-2">상품 관리</h3>
-            <p class="text-gray-600 mb-4">상품 추가, 수정, 삭제</p>
-            <button onclick="manageProducts()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">관리</button>
-          </div>
-          <div class="bg-white p-6 rounded-lg shadow-lg text-center">
-            <i class="fas fa-calendar text-5xl mb-4" style="color: var(--ocean);"></i>
-            <h3 class="text-xl font-semibold mb-2">이벤트 관리</h3>
-            <p class="text-gray-600 mb-4">이벤트 추가, 삭제</p>
-            <button onclick="manageEvents()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">관리</button>
-          </div>
-          <div class="bg-white p-6 rounded-lg shadow-lg text-center">
-            <i class="fas fa-hands-helping text-5xl mb-4" style="color: var(--ocean);"></i>
-            <h3 class="text-xl font-semibold mb-2">활동 관리</h3>
-            <p class="text-gray-600 mb-4">활동 추가, 삭제</p>
-            <button onclick="manageActivities()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">관리</button>
+        <div class="mb-8">
+          <div class="flex space-x-4 border-b">
+            <button onclick="showTab('products')" id="tab-products" class="px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600">상품 관리</button>
+            <button onclick="showTab('events')" id="tab-events" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">이벤트 관리</button>
+            <button onclick="showTab('activities')" id="tab-activities" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">활동 관리</button>
+            <button onclick="showTab('orders')" id="tab-orders" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">주문 관리</button>
           </div>
         </div>
+        
+        <div id="tab-content"></div>
       \`;
+      
+      showTab('products');
     }
     
-    function manageProducts() { alert('상품 관리 기능 (추후 구현)'); }
-    function manageEvents() { alert('이벤트 관리 기능 (추후 구현)'); }
-    function manageActivities() { alert('활동 관리 기능 (추후 구현)'); }
+    function showTab(tab) {
+      // Update tab styles
+      ['products', 'events', 'activities', 'orders'].forEach(t => {
+        const btn = document.getElementById('tab-' + t);
+        if (t === tab) {
+          btn.className = 'px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600';
+        } else {
+          btn.className = 'px-6 py-3 font-semibold text-gray-600 hover:text-gray-900';
+        }
+      });
+      
+      // Load content
+      if (tab === 'products') loadProductsManager();
+      else if (tab === 'events') loadEventsManager();
+      else if (tab === 'activities') loadActivitiesManager();
+      else if (tab === 'orders') loadOrdersManager();
+    }
+    
+    // ============================================
+    // Products Manager
+    // ============================================
+    async function loadProductsManager() {
+      try {
+        const response = await axios.get('/api/products');
+        const { products } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex justify-between items-center mb-6">
+              <h2 class="text-2xl font-bold">상품 목록</h2>
+              <button onclick="showAddProductForm()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                <i class="fas fa-plus mr-2"></i>상품 추가
+              </button>
+            </div>
+            
+            <div id="products-list" class="space-y-4">
+              \${products.map(p => \`
+                <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                  <div class="flex-1">
+                    <h3 class="text-lg font-semibold">\${p.name}</h3>
+                    <p class="text-gray-600">\${p.description.substring(0, 100)}...</p>
+                    <p class="text-blue-600 font-semibold mt-2">\${p.price.toLocaleString()}원 | 재고: \${p.stock}개</p>
+                  </div>
+                  <div class="space-x-2">
+                    <button onclick="editProduct(\${p.id})" class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">수정</button>
+                    <button onclick="deleteProduct(\${p.id})" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">삭제</button>
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load products error:', error);
+        alert('상품 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    function showAddProductForm() {
+      document.getElementById('tab-content').innerHTML = \`
+        <div class="bg-white rounded-lg shadow-lg p-6">
+          <h2 class="text-2xl font-bold mb-6">상품 추가</h2>
+          <form id="addProductForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-2">상품명 *</label>
+              <input type="text" id="product_name" required class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">설명 *</label>
+              <textarea id="product_description" required rows="4" class="w-full px-4 py-2 border rounded-lg"></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium mb-2">가격 (원) *</label>
+                <input type="number" id="product_price" required min="0" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">재고 수량 *</label>
+                <input type="number" id="product_stock" required min="0" value="0" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">이미지 URL</label>
+              <input type="text" id="product_image" placeholder="/static/images/products/..." class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">카테고리</label>
+              <input type="text" id="product_category" value="eco-goods" class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div class="flex space-x-4">
+              <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+              <button type="button" onclick="loadProductsManager()" class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700">취소</button>
+            </div>
+          </form>
+        </div>
+      \`;
+      
+      document.getElementById('addProductForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const data = {
+          name: document.getElementById('product_name').value,
+          description: document.getElementById('product_description').value,
+          price: parseInt(document.getElementById('product_price').value),
+          stock: parseInt(document.getElementById('product_stock').value),
+          image_url: document.getElementById('product_image').value || '/static/images/products/default.jpg',
+          category: document.getElementById('product_category').value
+        };
+        
+        try {
+          await axios.post('/api/admin/products', data);
+          alert('상품이 추가되었습니다!');
+          loadProductsManager();
+        } catch (error) {
+          console.error('Add product error:', error);
+          alert('상품 추가에 실패했습니다.');
+        }
+      });
+    }
+    
+    async function editProduct(id) {
+      try {
+        const response = await axios.get('/api/products/' + id);
+        const p = response.data.product;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">상품 수정</h2>
+            <form id="editProductForm" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-2">상품명 *</label>
+                <input type="text" id="product_name" value="\${p.name}" required class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">설명 *</label>
+                <textarea id="product_description" required rows="4" class="w-full px-4 py-2 border rounded-lg">\${p.description}</textarea>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium mb-2">가격 (원) *</label>
+                  <input type="number" id="product_price" value="\${p.price}" required min="0" class="w-full px-4 py-2 border rounded-lg">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium mb-2">재고 수량 *</label>
+                  <input type="number" id="product_stock" value="\${p.stock}" required min="0" class="w-full px-4 py-2 border rounded-lg">
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">이미지 URL</label>
+                <input type="text" id="product_image" value="\${p.image_url || ''}" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">카테고리</label>
+                <input type="text" id="product_category" value="\${p.category}" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div class="flex space-x-4">
+                <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+                <button type="button" onclick="loadProductsManager()" class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700">취소</button>
+              </div>
+            </form>
+          </div>
+        \`;
+        
+        document.getElementById('editProductForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          
+          const data = {
+            name: document.getElementById('product_name').value,
+            description: document.getElementById('product_description').value,
+            price: parseInt(document.getElementById('product_price').value),
+            stock: parseInt(document.getElementById('product_stock').value),
+            image_url: document.getElementById('product_image').value,
+            category: document.getElementById('product_category').value
+          };
+          
+          try {
+            await axios.put('/api/admin/products/' + id, data);
+            alert('상품이 수정되었습니다!');
+            loadProductsManager();
+          } catch (error) {
+            console.error('Edit product error:', error);
+            alert('상품 수정에 실패했습니다.');
+          }
+        });
+      } catch (error) {
+        console.error('Get product error:', error);
+        alert('상품 정보를 불러오는데 실패했습니다.');
+      }
+    }
+    
+    async function deleteProduct(id) {
+      if (!confirm('정말 이 상품을 삭제하시겠습니까?')) return;
+      
+      try {
+        await axios.delete('/api/admin/products/' + id);
+        alert('상품이 삭제되었습니다!');
+        loadProductsManager();
+      } catch (error) {
+        console.error('Delete product error:', error);
+        alert('상품 삭제에 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Events Manager
+    // ============================================
+    async function loadEventsManager() {
+      try {
+        const response = await axios.get('/api/events');
+        const { events } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex justify-between items-center mb-6">
+              <h2 class="text-2xl font-bold">이벤트 목록</h2>
+              <button onclick="showAddEventForm()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                <i class="fas fa-plus mr-2"></i>이벤트 추가
+              </button>
+            </div>
+            
+            <div class="space-y-4">
+              \${events.map(e => \`
+                <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                  <div class="flex-1">
+                    <h3 class="text-lg font-semibold">\${e.title}</h3>
+                    <p class="text-gray-600">\${e.content.substring(0, 100)}...</p>
+                    <p class="text-sm text-gray-500 mt-2">
+                      <i class="fas fa-calendar mr-1"></i>\${e.event_date || '일정 미정'} | 
+                      <i class="fas fa-map-marker-alt ml-2 mr-1"></i>\${e.location || '장소 미정'}
+                    </p>
+                  </div>
+                  <button onclick="deleteEvent(\${e.id})" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">삭제</button>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load events error:', error);
+        alert('이벤트 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    function showAddEventForm() {
+      document.getElementById('tab-content').innerHTML = \`
+        <div class="bg-white rounded-lg shadow-lg p-6">
+          <h2 class="text-2xl font-bold mb-6">이벤트 추가</h2>
+          <form id="addEventForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-2">제목 *</label>
+              <input type="text" id="event_title" required class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">내용 *</label>
+              <textarea id="event_content" required rows="6" class="w-full px-4 py-2 border rounded-lg"></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium mb-2">일정</label>
+                <input type="text" id="event_date" placeholder="2024-06-15" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">장소</label>
+                <input type="text" id="event_location" placeholder="제주도 협재해수욕장" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">이미지 URL</label>
+              <input type="text" id="event_image" placeholder="/static/images/events/..." class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div class="flex space-x-4">
+              <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+              <button type="button" onclick="loadEventsManager()" class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700">취소</button>
+            </div>
+          </form>
+        </div>
+      \`;
+      
+      document.getElementById('addEventForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const data = {
+          title: document.getElementById('event_title').value,
+          content: document.getElementById('event_content').value,
+          event_date: document.getElementById('event_date').value || null,
+          location: document.getElementById('event_location').value || null,
+          image_url: document.getElementById('event_image').value || null
+        };
+        
+        try {
+          await axios.post('/api/admin/events', data);
+          alert('이벤트가 추가되었습니다!');
+          loadEventsManager();
+        } catch (error) {
+          console.error('Add event error:', error);
+          alert('이벤트 추가에 실패했습니다.');
+        }
+      });
+    }
+    
+    async function deleteEvent(id) {
+      if (!confirm('정말 이 이벤트를 삭제하시겠습니까?')) return;
+      
+      try {
+        await axios.delete('/api/admin/events/' + id);
+        alert('이벤트가 삭제되었습니다!');
+        loadEventsManager();
+      } catch (error) {
+        console.error('Delete event error:', error);
+        alert('이벤트 삭제에 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Activities Manager
+    // ============================================
+    async function loadActivitiesManager() {
+      try {
+        const response = await axios.get('/api/activities');
+        const { activities } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex justify-between items-center mb-6">
+              <h2 class="text-2xl font-bold">활동 목록</h2>
+              <button onclick="showAddActivityForm()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                <i class="fas fa-plus mr-2"></i>활동 추가
+              </button>
+            </div>
+            
+            <div class="space-y-4">
+              \${activities.map(a => \`
+                <div class="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                  <div class="flex-1">
+                    <h3 class="text-lg font-semibold">\${a.title}</h3>
+                    <p class="text-gray-600">\${a.content.substring(0, 100)}...</p>
+                    <p class="text-sm text-gray-500 mt-2">
+                      <i class="fas fa-calendar mr-1"></i>\${a.activity_date || '날짜 미정'} | 
+                      <i class="fas fa-map-marker-alt ml-2 mr-1"></i>\${a.location || '장소 미정'}
+                    </p>
+                  </div>
+                  <button onclick="deleteActivity(\${a.id})" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">삭제</button>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load activities error:', error);
+        alert('활동 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    function showAddActivityForm() {
+      document.getElementById('tab-content').innerHTML = \`
+        <div class="bg-white rounded-lg shadow-lg p-6">
+          <h2 class="text-2xl font-bold mb-6">활동 추가</h2>
+          <form id="addActivityForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-2">제목 *</label>
+              <input type="text" id="activity_title" required class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">내용 *</label>
+              <textarea id="activity_content" required rows="6" class="w-full px-4 py-2 border rounded-lg"></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium mb-2">날짜</label>
+                <input type="text" id="activity_date" placeholder="2024-03-15" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">장소</label>
+                <input type="text" id="activity_location" placeholder="강릉 경포해변" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">이미지 URL</label>
+              <input type="text" id="activity_image" placeholder="/static/images/activities/..." class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div class="flex space-x-4">
+              <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+              <button type="button" onclick="loadActivitiesManager()" class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700">취소</button>
+            </div>
+          </form>
+        </div>
+      \`;
+      
+      document.getElementById('addActivityForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const data = {
+          title: document.getElementById('activity_title').value,
+          content: document.getElementById('activity_content').value,
+          activity_date: document.getElementById('activity_date').value || null,
+          location: document.getElementById('activity_location').value || null,
+          image_url: document.getElementById('activity_image').value || null
+        };
+        
+        try {
+          await axios.post('/api/admin/activities', data);
+          alert('활동이 추가되었습니다!');
+          loadActivitiesManager();
+        } catch (error) {
+          console.error('Add activity error:', error);
+          alert('활동 추가에 실패했습니다.');
+        }
+      });
+    }
+    
+    async function deleteActivity(id) {
+      if (!confirm('정말 이 활동을 삭제하시겠습니까?')) return;
+      
+      try {
+        await axios.delete('/api/admin/activities/' + id);
+        alert('활동이 삭제되었습니다!');
+        loadActivitiesManager();
+      } catch (error) {
+        console.error('Delete activity error:', error);
+        alert('활동 삭제에 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Orders Manager
+    // ============================================
+    async function loadOrdersManager() {
+      try {
+        const response = await axios.get('/api/admin/orders');
+        const { orders } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">주문 관리</h2>
+            <div class="space-y-4">
+              \${orders.length === 0 ? '<p class="text-center text-gray-600 py-8">주문이 없습니다.</p>' : orders.map(o => \`
+                <div class="border rounded-lg p-4 hover:bg-gray-50">
+                  <div class="flex justify-between items-start mb-2">
+                    <div>
+                      <h3 class="text-lg font-semibold">주문번호: \${o.order_number}</h3>
+                      <p class="text-sm text-gray-600">고객명: \${o.shipping_name} | 전화번호: \${o.shipping_phone}</p>
+                      <p class="text-sm text-gray-600">배송지: \${o.shipping_address}</p>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-lg font-bold text-blue-600">\${o.total_amount.toLocaleString()}원</p>
+                      <p class="text-sm text-gray-500">\${new Date(o.created_at).toLocaleDateString('ko-KR')}</p>
+                    </div>
+                  </div>
+                  <div class="mt-2 pt-2 border-t">
+                    <span class="px-3 py-1 rounded-full text-sm \${o.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
+                      \${o.status === 'pending' ? '대기중' : '완료'}
+                    </span>
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load orders error:', error);
+        alert('주문 목록을 불러오는데 실패했습니다.');
+      }
+    }
     
     checkAdminAuth();
   `));
