@@ -12,5 +12,12 @@
       "database_name": "ocevave-production",
       "database_id": "placeholder"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "ocevave-images",
+      "preview_bucket_name": "ocevave-images-preview"
+    }
   ]
 }

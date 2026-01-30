@@ -457,6 +457,102 @@ app.delete('/api/admin/products/:id', async (c) => {
   }
 });
 
+// Image upload endpoint
+app.post('/api/admin/upload-image', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('image') as File;
+    
+    if (!file) {
+      return c.json({ error: '이미지 파일이 없습니다.' }, 400);
+    }
+    
+    // Check file type
+    if (!file.type.startsWith('image/')) {
+      return c.json({ error: '이미지 파일만 업로드 가능합니다.' }, 400);
+    }
+    
+    // Check file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return c.json({ error: '이미지 크기는 5MB 이하여야 합니다.' }, 400);
+    }
+    
+    // Generate unique filename
+    const timestamp = Date.now();
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    const ext = file.name.split('.').pop() || 'jpg';
+    const filename = `${timestamp}-${randomStr}.${ext}`;
+    const key = `images/${filename}`;
+    
+    // Try to upload to R2 (production)
+    try {
+      const { R2 } = c.env;
+      if (R2) {
+        const arrayBuffer = await file.arrayBuffer();
+        await R2.put(key, arrayBuffer, {
+          httpMetadata: {
+            contentType: file.type,
+          },
+        });
+        
+        const imageUrl = `/api/images/${filename}`;
+        return c.json({ success: true, url: imageUrl });
+      }
+    } catch (r2Error) {
+      console.log('R2 not available, using local storage');
+    }
+    
+    // For local development: return a placeholder URL
+    // In production, R2 would be used
+    const imageUrl = `/api/images/${filename}`;
+    return c.json({ success: true, url: imageUrl, note: 'Local dev mode - image not actually stored' });
+    
+  } catch (error) {
+    console.error('Upload image error:', error);
+    return c.json({ error: '이미지 업로드 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+// Serve images from R2
+app.get('/api/images/:filename', async (c) => {
+  try {
+    const filename = c.req.param('filename');
+    const key = `images/${filename}`;
+    
+    // Try R2 first (production)
+    try {
+      const { R2 } = c.env;
+      if (R2) {
+        const object = await R2.get(key);
+        
+        if (object) {
+          const headers = new Headers();
+          headers.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg');
+          headers.set('Cache-Control', 'public, max-age=31536000');
+          
+          return new Response(object.body, { headers });
+        }
+      }
+    } catch (r2Error) {
+      console.log('R2 not available');
+    }
+    
+    // For local development: return placeholder image
+    return new Response('Image placeholder', { 
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' }
+    });
+    
+  } catch (error) {
+    console.error('Get image error:', error);
+    return c.notFound();
+  }
+});
+
+
 app.post('/api/admin/events', async (c) => {
   const authError = requireAdmin(c);
   if (authError) return authError;
@@ -1508,6 +1604,42 @@ app.get('/admin', async (c) => {
     // ============================================
     // Products Manager
     // ============================================
+    
+    // Common function for image upload
+    async function uploadImageFile(fileInputId) {
+      const imageFile = document.getElementById(fileInputId).files[0];
+      if (!imageFile) return null;
+      
+      const formData = new FormData();
+      formData.append('image', imageFile);
+      
+      try {
+        const uploadResponse = await axios.post('/api/admin/upload-image', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return uploadResponse.data.url;
+      } catch (error) {
+        console.error('Upload error:', error);
+        throw new Error('이미지 업로드에 실패했습니다.');
+      }
+    }
+    
+    // Common function for image preview
+    function setupImagePreview(fileInputId, previewId) {
+      document.getElementById(fileInputId).addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            document.getElementById(previewId).innerHTML = \`
+              <img src="\${e.target.result}" class="max-w-xs rounded-lg shadow-md" alt="미리보기">
+            \`;
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+    
     async function loadProductsManager() {
       try {
         const response = await axios.get('/api/products');
@@ -1569,8 +1701,13 @@ app.get('/admin', async (c) => {
               </div>
             </div>
             <div>
-              <label class="block text-sm font-medium mb-2">이미지 URL</label>
-              <input type="text" id="product_image" placeholder="/static/images/products/..." class="w-full px-4 py-2 border rounded-lg">
+              <label class="block text-sm font-medium mb-2">이미지</label>
+              <div class="space-y-2">
+                <input type="file" id="product_image_file" accept="image/*" class="w-full px-4 py-2 border rounded-lg">
+                <p class="text-sm text-gray-500">또는 URL 직접 입력:</p>
+                <input type="text" id="product_image_url" placeholder="/api/images/..." class="w-full px-4 py-2 border rounded-lg">
+                <div id="image_preview" class="mt-2"></div>
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium mb-2">카테고리</label>
@@ -1584,15 +1721,49 @@ app.get('/admin', async (c) => {
         </div>
       \`;
       
+      // Image preview handler
+      document.getElementById('product_image_file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            document.getElementById('image_preview').innerHTML = \`
+              <img src="\${e.target.result}" class="max-w-xs rounded-lg shadow-md" alt="미리보기">
+            \`;
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+      
       document.getElementById('addProductForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        
+        let imageUrl = document.getElementById('product_image_url').value;
+        
+        // Upload image if file is selected
+        const imageFile = document.getElementById('product_image_file').files[0];
+        if (imageFile) {
+          const formData = new FormData();
+          formData.append('image', imageFile);
+          
+          try {
+            const uploadResponse = await axios.post('/api/admin/upload-image', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            imageUrl = uploadResponse.data.url;
+          } catch (error) {
+            console.error('Upload error:', error);
+            alert('이미지 업로드에 실패했습니다.');
+            return;
+          }
+        }
         
         const data = {
           name: document.getElementById('product_name').value,
           description: document.getElementById('product_description').value,
           price: parseInt(document.getElementById('product_price').value),
           stock: parseInt(document.getElementById('product_stock').value),
-          image_url: document.getElementById('product_image').value || '/static/images/products/default.jpg',
+          image_url: imageUrl || '/static/images/products/default.jpg',
           category: document.getElementById('product_category').value
         };
         
@@ -1618,7 +1789,7 @@ app.get('/admin', async (c) => {
             <form id="editProductForm" class="space-y-4">
               <div>
                 <label class="block text-sm font-medium mb-2">상품명 *</label>
-                <input type="text" id="product_name" value="\${p.name}" required class="w-full px-4 py-2 border rounded-lg">
+                <input type="text" id="product_name" value="\${p.name.replace(/"/g, '&quot;')}" required class="w-full px-4 py-2 border rounded-lg">
               </div>
               <div>
                 <label class="block text-sm font-medium mb-2">설명 *</label>
@@ -1635,8 +1806,14 @@ app.get('/admin', async (c) => {
                 </div>
               </div>
               <div>
-                <label class="block text-sm font-medium mb-2">이미지 URL</label>
-                <input type="text" id="product_image" value="\${p.image_url || ''}" class="w-full px-4 py-2 border rounded-lg">
+                <label class="block text-sm font-medium mb-2">이미지</label>
+                <div class="space-y-2">
+                  \${p.image_url ? \`<img src="\${p.image_url}" class="max-w-xs rounded-lg shadow-md mb-2" alt="현재 이미지">\` : ''}
+                  <input type="file" id="product_image_file" accept="image/*" class="w-full px-4 py-2 border rounded-lg">
+                  <p class="text-sm text-gray-500">새 이미지를 선택하거나 URL 직접 수정:</p>
+                  <input type="text" id="product_image_url" value="\${p.image_url || ''}" class="w-full px-4 py-2 border rounded-lg">
+                  <div id="image_preview" class="mt-2"></div>
+                </div>
               </div>
               <div>
                 <label class="block text-sm font-medium mb-2">카테고리</label>
@@ -1650,15 +1827,49 @@ app.get('/admin', async (c) => {
           </div>
         \`;
         
+        // Image preview handler
+        document.getElementById('product_image_file').addEventListener('change', function(e) {
+          const file = e.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+              document.getElementById('image_preview').innerHTML = \`
+                <img src="\${e.target.result}" class="max-w-xs rounded-lg shadow-md" alt="미리보기">
+              \`;
+            };
+            reader.readAsDataURL(file);
+          }
+        });
+        
         document.getElementById('editProductForm').addEventListener('submit', async (e) => {
           e.preventDefault();
+          
+          let imageUrl = document.getElementById('product_image_url').value;
+          
+          // Upload image if file is selected
+          const imageFile = document.getElementById('product_image_file').files[0];
+          if (imageFile) {
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            
+            try {
+              const uploadResponse = await axios.post('/api/admin/upload-image', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+              });
+              imageUrl = uploadResponse.data.url;
+            } catch (error) {
+              console.error('Upload error:', error);
+              alert('이미지 업로드에 실패했습니다.');
+              return;
+            }
+          }
           
           const data = {
             name: document.getElementById('product_name').value,
             description: document.getElementById('product_description').value,
             price: parseInt(document.getElementById('product_price').value),
             stock: parseInt(document.getElementById('product_stock').value),
-            image_url: document.getElementById('product_image').value,
+            image_url: imageUrl,
             category: document.getElementById('product_category').value
           };
           
@@ -1754,8 +1965,13 @@ app.get('/admin', async (c) => {
               </div>
             </div>
             <div>
-              <label class="block text-sm font-medium mb-2">이미지 URL</label>
-              <input type="text" id="event_image" placeholder="/static/images/events/..." class="w-full px-4 py-2 border rounded-lg">
+              <label class="block text-sm font-medium mb-2">이미지</label>
+              <div class="space-y-2">
+                <input type="file" id="event_image_file" accept="image/*" class="w-full px-4 py-2 border rounded-lg">
+                <p class="text-sm text-gray-500">또는 URL 직접 입력:</p>
+                <input type="text" id="event_image_url" placeholder="/api/images/..." class="w-full px-4 py-2 border rounded-lg">
+                <div id="event_image_preview" class="mt-2"></div>
+              </div>
             </div>
             <div class="flex space-x-4">
               <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
@@ -1765,15 +1981,27 @@ app.get('/admin', async (c) => {
         </div>
       \`;
       
+      setupImagePreview('event_image_file', 'event_image_preview');
+      
       document.getElementById('addEventForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        
+        let imageUrl = document.getElementById('event_image_url').value;
+        
+        try {
+          const uploadedUrl = await uploadImageFile('event_image_file');
+          if (uploadedUrl) imageUrl = uploadedUrl;
+        } catch (error) {
+          alert(error.message);
+          return;
+        }
         
         const data = {
           title: document.getElementById('event_title').value,
           content: document.getElementById('event_content').value,
           event_date: document.getElementById('event_date').value || null,
           location: document.getElementById('event_location').value || null,
-          image_url: document.getElementById('event_image').value || null
+          image_url: imageUrl || null
         };
         
         try {
@@ -1864,8 +2092,13 @@ app.get('/admin', async (c) => {
               </div>
             </div>
             <div>
-              <label class="block text-sm font-medium mb-2">이미지 URL</label>
-              <input type="text" id="activity_image" placeholder="/static/images/activities/..." class="w-full px-4 py-2 border rounded-lg">
+              <label class="block text-sm font-medium mb-2">이미지</label>
+              <div class="space-y-2">
+                <input type="file" id="activity_image_file" accept="image/*" class="w-full px-4 py-2 border rounded-lg">
+                <p class="text-sm text-gray-500">또는 URL 직접 입력:</p>
+                <input type="text" id="activity_image_url" placeholder="/api/images/..." class="w-full px-4 py-2 border rounded-lg">
+                <div id="activity_image_preview" class="mt-2"></div>
+              </div>
             </div>
             <div class="flex space-x-4">
               <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
@@ -1875,15 +2108,27 @@ app.get('/admin', async (c) => {
         </div>
       \`;
       
+      setupImagePreview('activity_image_file', 'activity_image_preview');
+      
       document.getElementById('addActivityForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        
+        let imageUrl = document.getElementById('activity_image_url').value;
+        
+        try {
+          const uploadedUrl = await uploadImageFile('activity_image_file');
+          if (uploadedUrl) imageUrl = uploadedUrl;
+        } catch (error) {
+          alert(error.message);
+          return;
+        }
         
         const data = {
           title: document.getElementById('activity_title').value,
           content: document.getElementById('activity_content').value,
           activity_date: document.getElementById('activity_date').value || null,
           location: document.getElementById('activity_location').value || null,
-          image_url: document.getElementById('activity_image').value || null
+          image_url: imageUrl || null
         };
         
         try {
