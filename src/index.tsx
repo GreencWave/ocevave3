@@ -309,6 +309,39 @@ app.post('/api/events/reserve', async (c) => {
 });
 
 // ============================================
+// API Routes - Donations
+// ============================================
+
+app.post('/api/donations', async (c) => {
+  try {
+    const { amount, name, email, phone } = await c.req.json();
+    
+    if (!amount || !name || !email || !phone) {
+      return c.json({ error: '모든 필드를 입력해주세요.' }, 400);
+    }
+    
+    if (amount < 10000) {
+      return c.json({ error: '최소 후원 금액은 10,000원입니다.' }, 400);
+    }
+    
+    const { DB } = c.env;
+    
+    await DB.prepare(`
+      INSERT INTO donations (amount, donor_name, donor_email, donor_phone, donation_type, status)
+      VALUES (?, ?, ?, ?, 'monthly', 'active')
+    `).bind(amount, name, email, phone).run();
+    
+    return c.json({ 
+      success: true, 
+      message: '정기 후원 신청이 완료되었습니다. 감사합니다!' 
+    });
+  } catch (error) {
+    console.error('Donation error:', error);
+    return c.json({ error: '후원 신청 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+// ============================================
 // API Routes - Orders
 // ============================================
 
@@ -457,6 +490,23 @@ app.get('/api/admin/members', async (c) => {
   } catch (error) {
     console.error('Get members error:', error);
     return c.json({ error: '회원 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+app.get('/api/admin/donations', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const { DB } = c.env;
+    const { results } = await DB.prepare(`
+      SELECT * FROM donations 
+      ORDER BY created_at DESC
+    `).all();
+    return c.json({ donations: results });
+  } catch (error) {
+    console.error('Get donations error:', error);
+    return c.json({ error: '후원 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
   }
 });
 
@@ -1377,6 +1427,10 @@ app.get('/shop/donation', (c) => {
       let amount = document.getElementById('donation_amount').value;
       if (amount === 'custom') {
         amount = document.getElementById('custom_amount').value;
+        if (!amount || parseInt(amount) < 10000) {
+          alert('최소 후원 금액은 10,000원입니다.');
+          return;
+        }
       }
       
       const data = {
@@ -1386,9 +1440,14 @@ app.get('/shop/donation', (c) => {
         phone: document.getElementById('donor_phone').value
       };
       
-      // In production, this would integrate with payment system
-      alert('정기 후원 신청이 완료되었습니다!\\n\\n후원 금액: ' + parseInt(amount).toLocaleString() + '원/월\\n감사합니다!');
-      document.getElementById('donationForm').reset();
+      try {
+        const response = await axios.post('/api/donations', data);
+        alert('정기 후원 신청이 완료되었습니다!\\n\\n후원 금액: ' + parseInt(amount).toLocaleString() + '원/월\\n\\n감사합니다! 매월 첫째 날 자동으로 결제되며,\\n활동 소식지를 보내드리겠습니다.');
+        document.getElementById('donationForm').reset();
+      } catch (error) {
+        console.error('Donation error:', error);
+        alert(error.response?.data?.error || '후원 신청 중 오류가 발생했습니다.');
+      }
     });
   `));
 });
@@ -2161,13 +2220,14 @@ app.get('/admin', async (c) => {
     function loadAdminDashboard() {
       document.getElementById('adminContent').innerHTML = \`
         <div class="mb-8">
-          <div class="flex space-x-4 border-b">
-            <button onclick="showTab('products')" id="tab-products" class="px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600">상품 관리</button>
-            <button onclick="showTab('events')" id="tab-events" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">이벤트 관리</button>
-            <button onclick="showTab('activities')" id="tab-activities" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">활동 관리</button>
-            <button onclick="showTab('orders')" id="tab-orders" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">주문 관리</button>
-            <button onclick="showTab('reservations')" id="tab-reservations" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">예약 관리</button>
-            <button onclick="showTab('members')" id="tab-members" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">회원 관리</button>
+          <div class="flex space-x-4 border-b overflow-x-auto">
+            <button onclick="showTab('products')" id="tab-products" class="px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600 whitespace-nowrap">상품 관리</button>
+            <button onclick="showTab('events')" id="tab-events" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">이벤트 관리</button>
+            <button onclick="showTab('activities')" id="tab-activities" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">활동 관리</button>
+            <button onclick="showTab('orders')" id="tab-orders" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">주문 관리</button>
+            <button onclick="showTab('reservations')" id="tab-reservations" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">예약 관리</button>
+            <button onclick="showTab('members')" id="tab-members" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">회원 관리</button>
+            <button onclick="showTab('donations')" id="tab-donations" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">후원 관리</button>
           </div>
         </div>
         
@@ -2179,12 +2239,12 @@ app.get('/admin', async (c) => {
     
     function showTab(tab) {
       // Update tab styles
-      ['products', 'events', 'activities', 'orders', 'reservations', 'members'].forEach(t => {
+      ['products', 'events', 'activities', 'orders', 'reservations', 'members', 'donations'].forEach(t => {
         const btn = document.getElementById('tab-' + t);
         if (t === tab) {
-          btn.className = 'px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600';
+          btn.className = 'px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600 whitespace-nowrap';
         } else {
-          btn.className = 'px-6 py-3 font-semibold text-gray-600 hover:text-gray-900';
+          btn.className = 'px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap';
         }
       });
       
@@ -2195,6 +2255,7 @@ app.get('/admin', async (c) => {
       else if (tab === 'orders') loadOrdersManager();
       else if (tab === 'reservations') loadReservationsManager();
       else if (tab === 'members') loadMembersManager();
+      else if (tab === 'donations') loadDonationsManager();
     }
     
     // ============================================
@@ -2895,6 +2956,70 @@ app.get('/admin', async (c) => {
       } catch (error) {
         console.error('Load members error:', error);
         alert('회원 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Donations Manager
+    // ============================================
+    
+    async function loadDonationsManager() {
+      try {
+        const response = await axios.get('/api/admin/donations');
+        const { donations } = response.data;
+        
+        // Calculate statistics
+        const totalDonations = donations.reduce((sum, d) => sum + d.amount, 0);
+        const activeDonations = donations.filter(d => d.status === 'active');
+        const monthlyTotal = activeDonations.reduce((sum, d) => sum + d.amount, 0);
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">정기 후원 관리</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div class="bg-blue-50 p-4 rounded-lg">
+                <p class="text-sm text-gray-600 mb-1">총 후원자</p>
+                <p class="text-2xl font-bold text-blue-600">\${donations.length}명</p>
+              </div>
+              <div class="bg-green-50 p-4 rounded-lg">
+                <p class="text-sm text-gray-600 mb-1">활성 후원자</p>
+                <p class="text-2xl font-bold text-green-600">\${activeDonations.length}명</p>
+              </div>
+              <div class="bg-purple-50 p-4 rounded-lg">
+                <p class="text-sm text-gray-600 mb-1">월 정기 후원액</p>
+                <p class="text-2xl font-bold text-purple-600">\${monthlyTotal.toLocaleString()}원</p>
+              </div>
+            </div>
+            
+            <div class="space-y-4">
+              \${donations.length === 0 ? '<p class="text-center text-gray-600 py-8">후원자가 없습니다.</p>' : 
+                donations.map(d => \`
+                  <div class="border rounded-lg p-4 hover:bg-gray-50">
+                    <div class="flex justify-between items-start">
+                      <div>
+                        <h3 class="text-lg font-semibold">\${d.donor_name}</h3>
+                        <p class="text-sm text-gray-600">\${d.donor_email} | \${d.donor_phone}</p>
+                        <p class="text-xs text-gray-500 mt-1">신청일: \${new Date(d.created_at).toLocaleDateString('ko-KR')}</p>
+                      </div>
+                      <div class="text-right">
+                        <p class="text-xl font-bold text-blue-600">\${d.amount.toLocaleString()}원/월</p>
+                        <span class="inline-block mt-2 px-3 py-1 rounded-full text-sm \${
+                          d.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                        }">
+                          \${d.status === 'active' ? '활성' : '중단'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                \`).join('')
+              }
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load donations error:', error);
+        alert('후원 목록을 불러오는데 실패했습니다.');
       }
     }
     
