@@ -282,6 +282,33 @@ app.get('/api/activities/:id', async (c) => {
 });
 
 // ============================================
+// API Routes - Event Reservations
+// ============================================
+
+app.post('/api/events/reserve', async (c) => {
+  try {
+    const { event_id, name, email, phone, participants } = await c.req.json();
+    
+    if (!event_id || !name || !email || !phone || !participants) {
+      return c.json({ error: '모든 필드를 입력해주세요.' }, 400);
+    }
+    
+    const { DB } = c.env;
+    const user = c.get('user');
+    
+    await DB.prepare(`
+      INSERT INTO event_reservations (event_id, user_id, name, email, phone, participants, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'confirmed')
+    `).bind(event_id, user?.email ? null : null, name, email, phone, participants).run();
+    
+    return c.json({ success: true, message: '예약이 완료되었습니다.' });
+  } catch (error) {
+    console.error('Reservation error:', error);
+    return c.json({ error: '예약 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+// ============================================
 // API Routes - Orders
 // ============================================
 
@@ -396,6 +423,43 @@ app.get('/api/admin/orders', async (c) => {
   }
 });
 
+app.get('/api/admin/reservations', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const { DB } = c.env;
+    const { results } = await DB.prepare(`
+      SELECT r.*, e.title as event_title 
+      FROM event_reservations r
+      JOIN events e ON r.event_id = e.id
+      ORDER BY r.created_at DESC
+    `).all();
+    return c.json({ reservations: results });
+  } catch (error) {
+    console.error('Get reservations error:', error);
+    return c.json({ error: '예약 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+app.get('/api/admin/members', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const { DB } = c.env;
+    const { results } = await DB.prepare(`
+      SELECT id, email, name, is_admin, created_at 
+      FROM users 
+      ORDER BY created_at DESC
+    `).all();
+    return c.json({ members: results });
+  } catch (error) {
+    console.error('Get members error:', error);
+    return c.json({ error: '회원 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
 app.post('/api/admin/products', async (c) => {
   const authError = requireAdmin(c);
   if (authError) return authError;
@@ -487,9 +551,10 @@ app.post('/api/admin/upload-image', async (c) => {
     const filename = `${timestamp}-${randomStr}.${ext}`;
     const key = `images/${filename}`;
     
+    const { DB, R2 } = c.env;
+    
     // Try to upload to R2 (production)
     try {
-      const { R2 } = c.env;
       if (R2) {
         const arrayBuffer = await file.arrayBuffer();
         await R2.put(key, arrayBuffer, {
@@ -502,13 +567,26 @@ app.post('/api/admin/upload-image', async (c) => {
         return c.json({ success: true, url: imageUrl });
       }
     } catch (r2Error) {
-      console.log('R2 not available, using local storage');
+      console.log('R2 not available, using database storage');
     }
     
-    // For local development: return a placeholder URL
-    // In production, R2 would be used
+    // For local development: store in database as base64
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64Data = btoa(binary);
+    
+    // Store in database
+    await DB.prepare(`
+      INSERT INTO images (filename, data, content_type)
+      VALUES (?, ?, ?)
+    `).bind(filename, base64Data, file.type).run();
+    
     const imageUrl = `/api/images/${filename}`;
-    return c.json({ success: true, url: imageUrl, note: 'Local dev mode - image not actually stored' });
+    return c.json({ success: true, url: imageUrl });
     
   } catch (error) {
     console.error('Upload image error:', error);
@@ -516,15 +594,16 @@ app.post('/api/admin/upload-image', async (c) => {
   }
 });
 
-// Serve images from R2
+// Serve images from R2 or database
 app.get('/api/images/:filename', async (c) => {
   try {
     const filename = c.req.param('filename');
     const key = `images/${filename}`;
     
+    const { DB, R2 } = c.env;
+    
     // Try R2 first (production)
     try {
-      const { R2 } = c.env;
       if (R2) {
         const object = await R2.get(key);
         
@@ -537,14 +616,31 @@ app.get('/api/images/:filename', async (c) => {
         }
       }
     } catch (r2Error) {
-      console.log('R2 not available');
+      console.log('R2 not available, trying database');
     }
     
-    // For local development: return placeholder image
-    return new Response('Image placeholder', { 
-      status: 200,
-      headers: { 'Content-Type': 'text/plain' }
-    });
+    // For local development: get from database
+    const image = await DB.prepare('SELECT data, content_type FROM images WHERE filename = ?')
+      .bind(filename)
+      .first() as { data: string; content_type: string } | null;
+    
+    if (image) {
+      // Decode base64
+      const binaryString = atob(image.data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      const headers = new Headers();
+      headers.set('Content-Type', image.content_type);
+      headers.set('Cache-Control', 'public, max-age=31536000');
+      
+      return new Response(bytes, { headers });
+    }
+    
+    // Image not found
+    return c.notFound();
     
   } catch (error) {
     console.error('Get image error:', error);
@@ -1084,6 +1180,219 @@ app.get('/about', (c) => {
   `));
 });
 
+// Revenue usage page
+app.get('/shop/revenue', (c) => {
+  return c.html(baseLayout('수익 사용처', `
+    <div class="ocean-gradient text-white py-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h1 class="text-5xl font-bold mb-6 fade-in">수익 사용처</h1>
+        <p class="text-xl fade-in">여러분의 구매가 바다를 지키는 데 사용됩니다</p>
+      </div>
+    </div>
+    
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <div class="bg-white p-12 rounded-lg shadow-lg slide-up">
+        <h2 class="text-3xl font-bold mb-8 text-center" style="color: var(--ocean);">투명한 수익 사용</h2>
+        
+        <div class="space-y-8">
+          <div class="border-l-4 border-blue-600 pl-6">
+            <h3 class="text-2xl font-semibold mb-3" style="color: var(--ocean);">40% - 해양 정화 활동</h3>
+            <p class="text-gray-700 leading-relaxed">
+              전국 해안가에서 진행되는 정화 활동과 쓰레기 수거 캠페인에 사용됩니다.
+              자원봉사자 지원, 장비 구입, 수거한 쓰레기의 적절한 처리 비용으로 활용됩니다.
+            </p>
+          </div>
+          
+          <div class="border-l-4 border-green-600 pl-6">
+            <h3 class="text-2xl font-semibold mb-3" style="color: var(--leaf);">30% - 해양 생태계 보호</h3>
+            <p class="text-gray-700 leading-relaxed">
+              산호초 복원, 해양 생물 보호 구역 지정, 멸종위기 생물 보호 활동에 투자됩니다.
+              해양 생물학자와 협력하여 과학적인 보호 활동을 펼칩니다.
+            </p>
+          </div>
+          
+          <div class="border-l-4 border-yellow-600 pl-6">
+            <h3 class="text-2xl font-semibold mb-3" style="color: #d97706;">20% - 교육 프로그램</h3>
+            <p class="text-gray-700 leading-relaxed">
+              어린이와 청소년을 대상으로 한 환경 교육 프로그램을 운영합니다.
+              학교 방문 교육, 체험 활동, 교육 자료 제작에 사용됩니다.
+            </p>
+          </div>
+          
+          <div class="border-l-4 border-purple-600 pl-6">
+            <h3 class="text-2xl font-semibold mb-3" style="color: #9333ea;">10% - 운영 및 연구</h3>
+            <p class="text-gray-700 leading-relaxed">
+              OCEVAVE의 지속 가능한 운영과 새로운 환경 보호 기술 연구개발에 투자됩니다.
+              더 효과적인 보호 방법을 찾기 위해 노력합니다.
+            </p>
+          </div>
+        </div>
+        
+        <div class="mt-12 p-6 bg-blue-50 rounded-lg">
+          <p class="text-center text-lg font-semibold" style="color: var(--ocean);">
+            모든 수익 사용 내역은 분기별로 투명하게 공개됩니다
+          </p>
+        </div>
+      </div>
+    </div>
+  `));
+});
+
+// Regular donation page
+app.get('/shop/donation', (c) => {
+  return c.html(baseLayout('정기 후원', `
+    <div class="ocean-gradient text-white py-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h1 class="text-5xl font-bold mb-6 fade-in">정기 후원</h1>
+        <p class="text-xl fade-in">매달 작은 후원으로 큰 변화를 만들어주세요</p>
+      </div>
+    </div>
+    
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-bold mb-4" style="color: var(--ocean);">정기 후원 프로그램</h2>
+        <p class="text-lg text-gray-700">지속적인 후원으로 바다를 지키는 든든한 파트너가 되어주세요</p>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+        <div class="bg-white p-8 rounded-lg shadow-lg hover-lift text-center">
+          <i class="fas fa-seedling text-5xl mb-4" style="color: var(--leaf);"></i>
+          <h3 class="text-2xl font-bold mb-4">씨앗 후원자</h3>
+          <p class="text-4xl font-bold mb-4" style="color: var(--ocean);">월 10,000원</p>
+          <ul class="text-left space-y-2 mb-6 text-gray-700">
+            <li><i class="fas fa-check text-green-600 mr-2"></i>월간 활동 소식지 발송</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>후원자 전용 뉴스레터</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>연간 활동 보고서</li>
+          </ul>
+          <button onclick="startDonation(10000)" class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            후원하기
+          </button>
+        </div>
+        
+        <div class="bg-white p-8 rounded-lg shadow-lg hover-lift text-center border-4 border-blue-600">
+          <div class="bg-blue-600 text-white px-4 py-1 rounded-full text-sm inline-block mb-4">인기</div>
+          <i class="fas fa-water text-5xl mb-4" style="color: var(--ocean);"></i>
+          <h3 class="text-2xl font-bold mb-4">파도 후원자</h3>
+          <p class="text-4xl font-bold mb-4" style="color: var(--ocean);">월 30,000원</p>
+          <ul class="text-left space-y-2 mb-6 text-gray-700">
+            <li><i class="fas fa-check text-green-600 mr-2"></i>씨앗 후원자 혜택 전체</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>정화 활동 초대권 (연 2회)</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>친환경 굿즈 10% 할인</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>후원자 감사 이벤트 초대</li>
+          </ul>
+          <button onclick="startDonation(30000)" class="w-full px-6 py-3 ocean-gradient text-white rounded-lg hover:opacity-90">
+            후원하기
+          </button>
+        </div>
+        
+        <div class="bg-white p-8 rounded-lg shadow-lg hover-lift text-center">
+          <i class="fas fa-ship text-5xl mb-4" style="color: var(--ocean);"></i>
+          <h3 class="text-2xl font-bold mb-4">항해 후원자</h3>
+          <p class="text-4xl font-bold mb-4" style="color: var(--ocean);">월 50,000원 이상</p>
+          <ul class="text-left space-y-2 mb-6 text-gray-700">
+            <li><i class="fas fa-check text-green-600 mr-2"></i>파도 후원자 혜택 전체</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>VIP 정화 활동 참여 (무제한)</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>친환경 굿즈 20% 할인</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>연간 감사패 증정</li>
+            <li><i class="fas fa-check text-green-600 mr-2"></i>홈페이지 후원자 명단 등재</li>
+          </ul>
+          <button onclick="startDonation(50000)" class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            후원하기
+          </button>
+        </div>
+      </div>
+      
+      <div class="bg-white p-8 rounded-lg shadow-lg">
+        <h3 class="text-2xl font-bold mb-6 text-center" style="color: var(--ocean);">정기 후원 신청</h3>
+        <form id="donationForm" class="max-w-2xl mx-auto space-y-4">
+          <div>
+            <label class="block text-sm font-medium mb-2">후원 금액 선택</label>
+            <select id="donation_amount" class="w-full px-4 py-2 border rounded-lg">
+              <option value="10000">월 10,000원 (씨앗 후원자)</option>
+              <option value="30000" selected>월 30,000원 (파도 후원자)</option>
+              <option value="50000">월 50,000원 (항해 후원자)</option>
+              <option value="100000">월 100,000원 (항해 후원자 프리미엄)</option>
+              <option value="custom">직접 입력</option>
+            </select>
+          </div>
+          <div id="customAmountDiv" class="hidden">
+            <label class="block text-sm font-medium mb-2">후원 금액 (원)</label>
+            <input type="number" id="custom_amount" min="10000" class="w-full px-4 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-2">이름 *</label>
+            <input type="text" id="donor_name" required class="w-full px-4 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-2">이메일 *</label>
+            <input type="email" id="donor_email" required class="w-full px-4 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-2">전화번호 *</label>
+            <input type="tel" id="donor_phone" required class="w-full px-4 py-2 border rounded-lg">
+          </div>
+          <div class="bg-gray-50 p-4 rounded-lg">
+            <p class="text-sm text-gray-600 mb-2">
+              <i class="fas fa-info-circle mr-2"></i>
+              정기 후원은 매월 1일에 자동으로 결제됩니다.
+            </p>
+            <p class="text-sm text-gray-600">
+              <i class="fas fa-shield-alt mr-2"></i>
+              후원 내역은 연말정산 시 기부금 공제를 받을 수 있습니다.
+            </p>
+          </div>
+          <button type="submit" class="w-full px-6 py-3 ocean-gradient text-white rounded-lg hover:opacity-90 text-lg font-semibold">
+            정기 후원 신청하기
+          </button>
+        </form>
+      </div>
+      
+      <div class="mt-12 bg-green-50 border border-green-200 rounded-lg p-8">
+        <h3 class="text-2xl font-bold mb-4 text-center" style="color: var(--leaf);">후원금 사용 내역</h3>
+        <p class="text-center text-gray-700 leading-relaxed">
+          후원해 주신 소중한 마음은 100% 해양 보호 활동에만 사용됩니다.<br>
+          모든 후원금 사용 내역은 매월 투명하게 공개되며,<br>
+          후원자님께 정기적으로 활동 보고서를 보내드립니다.
+        </p>
+      </div>
+    </div>
+  `, '', `
+    document.getElementById('donation_amount').addEventListener('change', function() {
+      const customDiv = document.getElementById('customAmountDiv');
+      if (this.value === 'custom') {
+        customDiv.classList.remove('hidden');
+      } else {
+        customDiv.classList.add('hidden');
+      }
+    });
+    
+    function startDonation(amount) {
+      document.getElementById('donation_amount').value = amount;
+      window.scrollTo({ top: document.getElementById('donationForm').offsetTop - 100, behavior: 'smooth' });
+    }
+    
+    document.getElementById('donationForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      let amount = document.getElementById('donation_amount').value;
+      if (amount === 'custom') {
+        amount = document.getElementById('custom_amount').value;
+      }
+      
+      const data = {
+        amount: parseInt(amount),
+        name: document.getElementById('donor_name').value,
+        email: document.getElementById('donor_email').value,
+        phone: document.getElementById('donor_phone').value
+      };
+      
+      // In production, this would integrate with payment system
+      alert('정기 후원 신청이 완료되었습니다!\\n\\n후원 금액: ' + parseInt(amount).toLocaleString() + '원/월\\n감사합니다!');
+      document.getElementById('donationForm').reset();
+    });
+  `));
+});
+
 // ============================================
 // Shop Pages
 // ============================================
@@ -1119,8 +1428,11 @@ app.get('/shop', async (c) => {
         
         container.innerHTML = products.map(product => \`
           <div class="bg-white rounded-lg shadow-lg overflow-hidden hover-lift">
-            <div class="h-64 bg-gray-200 flex items-center justify-center">
-              <i class="fas fa-shopping-bag text-6xl text-gray-400"></i>
+            <div class="h-64 bg-gray-200 flex items-center justify-center overflow-hidden">
+              \${product.image_url ? 
+                \`<img src="\${product.image_url}" alt="\${product.name}" class="w-full h-full object-cover">\` : 
+                \`<i class="fas fa-shopping-bag text-6xl text-gray-400"></i>\`
+              }
             </div>
             <div class="p-6">
               <h3 class="text-xl font-semibold mb-2">\${product.name}</h3>
@@ -1172,6 +1484,113 @@ app.get('/shop', async (c) => {
     
     loadProducts();
   `));
+});
+
+// Product detail page
+app.get('/shop/product/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const { DB } = c.env;
+    
+    const product = await DB.prepare('SELECT * FROM products WHERE id = ?')
+      .bind(id)
+      .first() as Product | null;
+    
+    if (!product) {
+      return c.html(baseLayout('상품을 찾을 수 없습니다', `
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
+          <h1 class="text-4xl font-bold mb-4 text-gray-800">상품을 찾을 수 없습니다</h1>
+          <p class="text-gray-600 mb-8">요청하신 상품이 존재하지 않습니다.</p>
+          <a href="/shop" class="px-6 py-3 ocean-gradient text-white rounded-lg hover:opacity-90">상품 목록으로</a>
+        </div>
+      `));
+    }
+    
+    return c.html(baseLayout(product.name, `
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8 p-8">
+            <div class="flex items-center justify-center bg-gray-100 rounded-lg overflow-hidden" style="min-height: 400px;">
+              ${product.image_url ? 
+                `<img src="${product.image_url}" alt="${product.name}" class="w-full h-full object-cover">` : 
+                `<i class="fas fa-shopping-bag text-9xl text-gray-300"></i>`
+              }
+            </div>
+            <div class="flex flex-col justify-between">
+              <div>
+                <h1 class="text-4xl font-bold mb-4" style="color: var(--ocean);">${product.name}</h1>
+                <p class="text-gray-700 text-lg mb-6 leading-relaxed">${product.description}</p>
+                <div class="mb-6">
+                  <span class="inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                    ${product.category}
+                  </span>
+                </div>
+                <div class="flex items-baseline gap-4 mb-8">
+                  <span class="text-4xl font-bold" style="color: var(--ocean);">${product.price.toLocaleString()}원</span>
+                  ${product.stock > 0 ? 
+                    `<span class="text-green-600">재고: ${product.stock}개</span>` : 
+                    `<span class="text-red-600">품절</span>`
+                  }
+                </div>
+              </div>
+              <div class="space-y-4">
+                <div class="flex gap-4">
+                  <input type="number" id="quantity" min="1" max="${product.stock}" value="1" 
+                    class="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                  <button onclick="addToCart(${product.id})" 
+                    ${product.stock === 0 ? 'disabled' : ''}
+                    class="flex-1 px-6 py-3 ocean-gradient text-white rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-lg font-semibold">
+                    <i class="fas fa-shopping-cart mr-2"></i>장바구니에 담기
+                  </button>
+                </div>
+                <a href="/shop" class="block text-center px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">
+                  목록으로 돌아가기
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `, '', `
+      function addToCart(productId) {
+        const quantity = parseInt(document.getElementById('quantity').value);
+        
+        axios.get('/api/products/' + productId).then(response => {
+          const product = response.data.product;
+          let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+          const existingItem = cart.find(item => item.productId === productId);
+          
+          if (existingItem) {
+            existingItem.quantity += quantity;
+          } else {
+            cart.push({
+              productId: product.id,
+              name: product.name,
+              price: product.price,
+              quantity: quantity,
+              image_url: product.image_url
+            });
+          }
+          
+          localStorage.setItem('cart', JSON.stringify(cart));
+          updateCartBadge();
+          alert('장바구니에 추가되었습니다.');
+        }).catch(error => {
+          console.error('Add to cart error:', error);
+          alert('장바구니에 추가하는데 실패했습니다.');
+        });
+      }
+    `));
+  } catch (error) {
+    console.error('Product detail error:', error);
+    return c.html(baseLayout('오류', `
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
+        <h1 class="text-4xl font-bold mb-4 text-red-600">오류가 발생했습니다</h1>
+        <p class="text-gray-600 mb-8">상품 정보를 불러오는데 실패했습니다.</p>
+        <a href="/shop" class="px-6 py-3 ocean-gradient text-white rounded-lg hover:opacity-90">상품 목록으로</a>
+      </div>
+    `));
+  }
 });
 
 app.get('/shop/cart', (c) => {
@@ -1394,8 +1813,11 @@ app.get('/events', async (c) => {
         
         container.innerHTML = events.map(event => \`
           <div class="bg-white rounded-lg shadow-lg overflow-hidden hover-lift">
-            <div class="h-48 bg-gray-200 flex items-center justify-center">
-              <i class="fas fa-calendar text-6xl text-gray-400"></i>
+            <div class="h-48 bg-gray-200 flex items-center justify-center overflow-hidden">
+              \${event.image_url ? 
+                \`<img src="\${event.image_url}" alt="\${event.title}" class="w-full h-full object-cover">\` : 
+                \`<i class="fas fa-calendar text-6xl text-gray-400"></i>\`
+              }
             </div>
             <div class="p-6">
               <h3 class="text-2xl font-semibold mb-2">\${event.title}</h3>
@@ -1404,6 +1826,9 @@ app.get('/events', async (c) => {
                 <span><i class="fas fa-calendar-day mr-1"></i>\${event.event_date || '일정 미정'}</span>
                 <span><i class="fas fa-map-marker-alt mr-1"></i>\${event.location || '장소 미정'}</span>
               </div>
+              <a href="/events/\${event.id}" class="block mt-4 text-center text-blue-600 hover:text-blue-800">
+                상세보기
+              </a>
             </div>
           </div>
         \`).join('');
@@ -1413,6 +1838,122 @@ app.get('/events', async (c) => {
     }
     loadEvents();
   `));
+});
+
+// Event detail page
+app.get('/events/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const { DB } = c.env;
+    const event = await DB.prepare('SELECT * FROM events WHERE id = ?').bind(id).first();
+    
+    if (!event) {
+      return c.html(baseLayout('이벤트 없음', '<div class="text-center py-20"><h1 class="text-3xl mb-4">이벤트를 찾을 수 없습니다</h1><a href="/events" class="text-blue-600">목록으로</a></div>'));
+    }
+    
+    const e = event as any;
+    
+    return c.html(baseLayout(e.title, `
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+          \${e.image_url ? \`
+            <div class="h-96 overflow-hidden">
+              <img src="\${e.image_url}" alt="\${e.title}" class="w-full h-full object-cover">
+            </div>
+          \` : ''}
+          <div class="p-8">
+            <h1 class="text-4xl font-bold mb-4" style="color: var(--ocean);">\${e.title}</h1>
+            <div class="flex items-center space-x-6 text-gray-600 mb-6">
+              <span><i class="fas fa-calendar-day mr-2"></i>\${e.event_date || '일정 미정'}</span>
+              <span><i class="fas fa-map-marker-alt mr-2"></i>\${e.location || '장소 미정'}</span>
+            </div>
+            <div class="prose max-w-none mb-8">
+              <p class="text-lg leading-relaxed">\${e.content}</p>
+            </div>
+            <div class="border-t pt-6">
+              <button onclick="showReservationForm()" class="px-8 py-3 ocean-gradient text-white rounded-lg hover:opacity-90 text-lg font-semibold">
+                <i class="fas fa-calendar-check mr-2"></i>예약하기
+              </button>
+              <a href="/events" class="ml-4 px-8 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 inline-block">
+                목록으로
+              </a>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Reservation Form Modal -->
+        <div id="reservationModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold mb-6" style="color: var(--ocean);">이벤트 예약</h2>
+            <form id="reservationForm" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-2">이름 *</label>
+                <input type="text" id="res_name" required class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">이메일 *</label>
+                <input type="email" id="res_email" required class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">전화번호 *</label>
+                <input type="tel" id="res_phone" required class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-2">참가 인원 *</label>
+                <input type="number" id="res_participants" required min="1" value="1" class="w-full px-4 py-2 border rounded-lg">
+              </div>
+              <div class="flex space-x-4">
+                <button type="submit" class="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">예약 완료</button>
+                <button type="button" onclick="closeReservationForm()" class="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700">취소</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    `, '', `
+      const eventId = ${e.id};
+      
+      function showReservationForm() {
+        document.getElementById('reservationModal').classList.remove('hidden');
+      }
+      
+      function closeReservationForm() {
+        document.getElementById('reservationModal').classList.add('hidden');
+      }
+      
+      document.getElementById('reservationForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const data = {
+          event_id: eventId,
+          name: document.getElementById('res_name').value,
+          email: document.getElementById('res_email').value,
+          phone: document.getElementById('res_phone').value,
+          participants: parseInt(document.getElementById('res_participants').value)
+        };
+        
+        try {
+          await axios.post('/api/events/reserve', data);
+          alert('예약이 완료되었습니다!');
+          closeReservationForm();
+          document.getElementById('reservationForm').reset();
+        } catch (error) {
+          console.error('Reservation error:', error);
+          alert('예약 중 오류가 발생했습니다.');
+        }
+      });
+      
+      // Close modal on background click
+      document.getElementById('reservationModal').addEventListener('click', (e) => {
+        if (e.target.id === 'reservationModal') {
+          closeReservationForm();
+        }
+      });
+    `));
+  } catch (error) {
+    console.error('Event detail error:', error);
+    return c.html(baseLayout('오류', '<div class="text-center py-20"><h1 class="text-3xl">오류가 발생했습니다</h1></div>'));
+  }
 });
 
 // ============================================
@@ -1444,8 +1985,11 @@ app.get('/activities', async (c) => {
         
         container.innerHTML = activities.map(activity => \`
           <div class="bg-white rounded-lg shadow-lg overflow-hidden hover-lift">
-            <div class="h-48 bg-gray-200 flex items-center justify-center">
-              <i class="fas fa-hands-helping text-6xl text-gray-400"></i>
+            <div class="h-48 bg-gray-200 flex items-center justify-center overflow-hidden">
+              \${activity.image_url ? 
+                \`<img src="\${activity.image_url}" alt="\${activity.title}" class="w-full h-full object-cover">\` : 
+                \`<i class="fas fa-hands-helping text-6xl text-gray-400"></i>\`
+              }
             </div>
             <div class="p-6">
               <h3 class="text-2xl font-semibold mb-2">\${activity.title}</h3>
@@ -1454,6 +1998,9 @@ app.get('/activities', async (c) => {
                 <span><i class="fas fa-calendar-day mr-1"></i>\${activity.activity_date || '날짜 미정'}</span>
                 <span><i class="fas fa-map-marker-alt mr-1"></i>\${activity.location || '장소 미정'}</span>
               </div>
+              <a href="/activities/\${activity.id}" class="block mt-4 text-center text-blue-600 hover:text-blue-800">
+                상세보기
+              </a>
             </div>
           </div>
         \`).join('');
@@ -1463,6 +2010,51 @@ app.get('/activities', async (c) => {
     }
     loadActivities();
   `));
+});
+
+// Activity detail page
+app.get('/activities/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const { DB } = c.env;
+    const activity = await DB.prepare('SELECT * FROM activities WHERE id = ?').bind(id).first();
+    
+    if (!activity) {
+      return c.html(baseLayout('활동 없음', '<div class="text-center py-20"><h1 class="text-3xl mb-4">활동을 찾을 수 없습니다</h1><a href="/activities" class="text-blue-600">목록으로</a></div>'));
+    }
+    
+    const a = activity as any;
+    
+    return c.html(baseLayout(a.title, `
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+          ${a.image_url ? `
+            <div class="h-96 overflow-hidden">
+              <img src="${a.image_url}" alt="${a.title}" class="w-full h-full object-cover">
+            </div>
+          ` : ''}
+          <div class="p-8">
+            <h1 class="text-4xl font-bold mb-4" style="color: var(--ocean);">${a.title}</h1>
+            <div class="flex items-center space-x-6 text-gray-600 mb-6">
+              <span><i class="fas fa-calendar-day mr-2"></i>${a.activity_date || '날짜 미정'}</span>
+              <span><i class="fas fa-map-marker-alt mr-2"></i>${a.location || '장소 미정'}</span>
+            </div>
+            <div class="prose max-w-none mb-8">
+              <p class="text-lg leading-relaxed">${a.content}</p>
+            </div>
+            <div class="border-t pt-6">
+              <a href="/activities" class="px-8 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 inline-block">
+                목록으로
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    `));
+  } catch (error) {
+    console.error('Activity detail error:', error);
+    return c.html(baseLayout('오류', '<div class="text-center py-20"><h1 class="text-3xl">오류가 발생했습니다</h1></div>'));
+  }
 });
 
 // ============================================
@@ -1574,6 +2166,8 @@ app.get('/admin', async (c) => {
             <button onclick="showTab('events')" id="tab-events" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">이벤트 관리</button>
             <button onclick="showTab('activities')" id="tab-activities" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">활동 관리</button>
             <button onclick="showTab('orders')" id="tab-orders" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">주문 관리</button>
+            <button onclick="showTab('reservations')" id="tab-reservations" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">예약 관리</button>
+            <button onclick="showTab('members')" id="tab-members" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900">회원 관리</button>
           </div>
         </div>
         
@@ -1585,7 +2179,7 @@ app.get('/admin', async (c) => {
     
     function showTab(tab) {
       // Update tab styles
-      ['products', 'events', 'activities', 'orders'].forEach(t => {
+      ['products', 'events', 'activities', 'orders', 'reservations', 'members'].forEach(t => {
         const btn = document.getElementById('tab-' + t);
         if (t === tab) {
           btn.className = 'px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600';
@@ -1599,6 +2193,8 @@ app.get('/admin', async (c) => {
       else if (tab === 'events') loadEventsManager();
       else if (tab === 'activities') loadActivitiesManager();
       else if (tab === 'orders') loadOrdersManager();
+      else if (tab === 'reservations') loadReservationsManager();
+      else if (tab === 'members') loadMembersManager();
     }
     
     // ============================================
@@ -2193,6 +2789,112 @@ app.get('/admin', async (c) => {
       } catch (error) {
         console.error('Load orders error:', error);
         alert('주문 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Reservations Manager
+    // ============================================
+    
+    async function loadReservationsManager() {
+      try {
+        const response = await axios.get('/api/admin/reservations');
+        const { reservations } = response.data;
+        
+        // Group by event
+        const byEvent = {};
+        reservations.forEach(r => {
+          if (!byEvent[r.event_id]) {
+            byEvent[r.event_id] = {
+              event_title: r.event_title,
+              reservations: [],
+              totalParticipants: 0
+            };
+          }
+          byEvent[r.event_id].reservations.push(r);
+          byEvent[r.event_id].totalParticipants += r.participants;
+        });
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">예약 관리</h2>
+            <div class="space-y-6">
+              \${Object.keys(byEvent).length === 0 ? '<p class="text-center text-gray-600 py-8">예약이 없습니다.</p>' : 
+                Object.values(byEvent).map(event => \`
+                  <div class="border rounded-lg p-4">
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-semibold">\${event.event_title}</h3>
+                      <span class="px-4 py-2 bg-blue-100 text-blue-800 rounded-full font-semibold">
+                        총 \${event.totalParticipants}명
+                      </span>
+                    </div>
+                    <div class="space-y-2">
+                      \${event.reservations.map(r => \`
+                        <div class="flex justify-between items-center p-3 bg-gray-50 rounded">
+                          <div>
+                            <p class="font-medium">\${r.name}</p>
+                            <p class="text-sm text-gray-600">\${r.email} | \${r.phone}</p>
+                          </div>
+                          <div class="text-right">
+                            <p class="font-semibold">\${r.participants}명</p>
+                            <p class="text-xs text-gray-500">\${new Date(r.created_at).toLocaleDateString('ko-KR')}</p>
+                          </div>
+                        </div>
+                      \`).join('')}
+                    </div>
+                  </div>
+                \`).join('')
+              }
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load reservations error:', error);
+        alert('예약 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Members Manager
+    // ============================================
+    
+    async function loadMembersManager() {
+      try {
+        const response = await axios.get('/api/admin/members');
+        const { members } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">회원 관리</h2>
+            <div class="mb-4">
+              <p class="text-gray-600">총 회원 수: <span class="font-bold text-blue-600">\${members.length}명</span></p>
+            </div>
+            <div class="space-y-4">
+              \${members.length === 0 ? '<p class="text-center text-gray-600 py-8">회원이 없습니다.</p>' : 
+                members.map(m => \`
+                  <div class="border rounded-lg p-4 hover:bg-gray-50">
+                    <div class="flex justify-between items-start">
+                      <div>
+                        <h3 class="text-lg font-semibold">\${m.name}</h3>
+                        <p class="text-sm text-gray-600">\${m.email}</p>
+                        <p class="text-xs text-gray-500 mt-1">가입일: \${new Date(m.created_at).toLocaleDateString('ko-KR')}</p>
+                      </div>
+                      <div>
+                        \${m.is_admin ? 
+                          '<span class="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-sm">관리자</span>' : 
+                          '<span class="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">일반 회원</span>'
+                        }
+                      </div>
+                    </div>
+                  </div>
+                \`).join('')
+              }
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load members error:', error);
+        alert('회원 목록을 불러오는데 실패했습니다.');
       }
     }
     
