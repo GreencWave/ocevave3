@@ -928,8 +928,8 @@ const baseLayout = (title: string, content: string, customCss = '', customJs = '
             <a href="/shop" class="text-gray-700 hover:text-gray-900">구매</a>
             <div class="nav-dropdown">
               <a href="/shop" class="block px-4 py-2 hover:bg-gray-50">친환경 굿즈</a>
-              <a href="/shop#revenue" class="block px-4 py-2 hover:bg-gray-50">수익 사용처</a>
-              <a href="/shop#donation" class="block px-4 py-2 hover:bg-gray-50">정기 후원</a>
+              <a href="/shop/revenue" class="block px-4 py-2 hover:bg-gray-50">수익 사용처</a>
+              <a href="/shop/donation" class="block px-4 py-2 hover:bg-gray-50">정기 후원</a>
             </div>
           </div>
           <div class="nav-item relative">
