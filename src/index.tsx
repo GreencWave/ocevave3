@@ -448,8 +448,28 @@ app.get('/api/admin/orders', async (c) => {
   
   try {
     const { DB } = c.env;
-    const { results } = await DB.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
-    return c.json({ orders: results });
+    
+    // Get all orders
+    const { results: orders } = await DB.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
+    
+    // Get order items for each order
+    const ordersWithItems = await Promise.all(
+      orders.map(async (order: any) => {
+        const { results: items } = await DB.prepare(`
+          SELECT oi.*, p.name as product_name, p.image_url
+          FROM order_items oi
+          LEFT JOIN products p ON oi.product_id = p.id
+          WHERE oi.order_id = ?
+        `).bind(order.id).all();
+        
+        return {
+          ...order,
+          items: items
+        };
+      })
+    );
+    
+    return c.json({ orders: ordersWithItems });
   } catch (error) {
     console.error('Get orders error:', error);
     return c.json({ error: '주문 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
@@ -507,6 +527,104 @@ app.get('/api/admin/donations', async (c) => {
   } catch (error) {
     console.error('Get donations error:', error);
     return c.json({ error: '후원 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+// ============================================
+// API Routes - Crisis Articles Management
+// ============================================
+
+app.get('/api/crisis-articles', async (c) => {
+  try {
+    const { DB } = c.env;
+    const { results } = await DB.prepare(`
+      SELECT * FROM crisis_articles 
+      ORDER BY published_date DESC, created_at DESC
+    `).all();
+    return c.json({ articles: results });
+  } catch (error) {
+    console.error('Get crisis articles error:', error);
+    return c.json({ error: '기사 목록을 불러오는 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+app.post('/api/admin/crisis-articles', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const { title, content, source, source_url, image_url, category, published_date } = await c.req.json();
+    
+    if (!title || !content) {
+      return c.json({ error: '제목과 내용은 필수입니다.' }, 400);
+    }
+    
+    const { DB } = c.env;
+    const result = await DB.prepare(`
+      INSERT INTO crisis_articles (title, content, source, source_url, image_url, category, published_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(title, content, source || '', source_url || '', image_url || '', category || 'general', published_date || null).run();
+    
+    return c.json({ success: true, id: result.meta.last_row_id });
+  } catch (error) {
+    console.error('Create crisis article error:', error);
+    return c.json({ error: '기사 생성 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+app.delete('/api/admin/crisis-articles/:id', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const id = c.req.param('id');
+    const { DB } = c.env;
+    await DB.prepare('DELETE FROM crisis_articles WHERE id = ?').bind(id).run();
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Delete crisis article error:', error);
+    return c.json({ error: '기사 삭제 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+// ============================================
+// API Routes - Company Info Management
+// ============================================
+
+app.get('/api/company-info', async (c) => {
+  try {
+    const { DB } = c.env;
+    const { results } = await DB.prepare('SELECT * FROM company_info ORDER BY section').all();
+    return c.json({ info: results });
+  } catch (error) {
+    console.error('Get company info error:', error);
+    return c.json({ error: '회사 정보를 불러오는 중 오류가 발생했습니다.' }, 500);
+  }
+});
+
+app.put('/api/admin/company-info/:section', async (c) => {
+  const authError = requireAdmin(c);
+  if (authError) return authError;
+  
+  try {
+    const section = c.req.param('section');
+    const { title, content } = await c.req.json();
+    
+    if (!content) {
+      return c.json({ error: '내용은 필수입니다.' }, 400);
+    }
+    
+    const { DB } = c.env;
+    await DB.prepare(`
+      UPDATE company_info
+      SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE section = ?
+    `).bind(title || '', content, section).run();
+    
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Update company info error:', error);
+    return c.json({ error: '회사 정보 수정 중 오류가 발생했습니다.' }, 500);
   }
 });
 
@@ -2228,6 +2346,8 @@ app.get('/admin', async (c) => {
             <button onclick="showTab('reservations')" id="tab-reservations" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">예약 관리</button>
             <button onclick="showTab('members')" id="tab-members" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">회원 관리</button>
             <button onclick="showTab('donations')" id="tab-donations" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">후원 관리</button>
+            <button onclick="showTab('articles')" id="tab-articles" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">위기 기사</button>
+            <button onclick="showTab('company')" id="tab-company" class="px-6 py-3 font-semibold text-gray-600 hover:text-gray-900 whitespace-nowrap">회사 소개</button>
           </div>
         </div>
         
@@ -2239,7 +2359,7 @@ app.get('/admin', async (c) => {
     
     function showTab(tab) {
       // Update tab styles
-      ['products', 'events', 'activities', 'orders', 'reservations', 'members', 'donations'].forEach(t => {
+      ['products', 'events', 'activities', 'orders', 'reservations', 'members', 'donations', 'articles', 'company'].forEach(t => {
         const btn = document.getElementById('tab-' + t);
         if (t === tab) {
           btn.className = 'px-6 py-3 font-semibold border-b-2 border-blue-600 text-blue-600 whitespace-nowrap';
@@ -2256,6 +2376,8 @@ app.get('/admin', async (c) => {
       else if (tab === 'reservations') loadReservationsManager();
       else if (tab === 'members') loadMembersManager();
       else if (tab === 'donations') loadDonationsManager();
+      else if (tab === 'articles') loadArticlesManager();
+      else if (tab === 'company') loadCompanyInfoManager();
     }
     
     // ============================================
@@ -2837,6 +2959,25 @@ app.get('/admin', async (c) => {
                       <p class="text-sm text-gray-500">\${new Date(o.created_at).toLocaleDateString('ko-KR')}</p>
                     </div>
                   </div>
+                  
+                  <!-- 주문 상품 목록 -->
+                  \${o.items && o.items.length > 0 ? \`
+                    <div class="mt-3 pt-3 border-t">
+                      <p class="text-sm font-semibold mb-2">주문 상품:</p>
+                      <div class="space-y-1">
+                        \${o.items.map(item => \`
+                          <div class="flex items-center text-sm text-gray-700">
+                            <span class="font-medium">\${item.product_name || '상품명 없음'}</span>
+                            <span class="mx-2">×</span>
+                            <span>\${item.quantity}개</span>
+                            <span class="mx-2">-</span>
+                            <span class="text-blue-600">\${(item.price * item.quantity).toLocaleString()}원</span>
+                          </div>
+                        \`).join('')}
+                      </div>
+                    </div>
+                  \` : ''}
+                  
                   <div class="mt-2 pt-2 border-t">
                     <span class="px-3 py-1 rounded-full text-sm \${o.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
                       \${o.status === 'pending' ? '대기중' : '완료'}
@@ -3020,6 +3161,190 @@ app.get('/admin', async (c) => {
       } catch (error) {
         console.error('Load donations error:', error);
         alert('후원 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Crisis Articles Manager
+    // ============================================
+    
+    async function loadArticlesManager() {
+      try {
+        const response = await axios.get('/api/crisis-articles');
+        const { articles } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex justify-between items-center mb-6">
+              <h2 class="text-2xl font-bold">해양 위기 기사 관리</h2>
+              <button onclick="showAddArticleForm()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                <i class="fas fa-plus mr-2"></i>기사 추가
+              </button>
+            </div>
+            <div id="articlesContent" class="space-y-4">
+              \${articles.length === 0 ? '<p class="text-center text-gray-600 py-8">기사가 없습니다.</p>' : 
+                articles.map(a => \`
+                  <div class="border rounded-lg p-4 hover:bg-gray-50">
+                    <div class="flex justify-between items-start">
+                      <div class="flex-1">
+                        <h3 class="text-lg font-semibold mb-2">\${a.title}</h3>
+                        <p class="text-sm text-gray-600 mb-2">\${a.content.substring(0, 150)}...</p>
+                        \${a.source ? \`<p class="text-xs text-gray-500">출처: \${a.source}</p>\` : ''}
+                        \${a.source_url ? \`<p class="text-xs text-blue-600"><a href="\${a.source_url}" target="_blank">링크 보기</a></p>\` : ''}
+                        <p class="text-xs text-gray-500 mt-2">발행일: \${a.published_date || '미정'}</p>
+                      </div>
+                      <button onclick="deleteArticle(\${a.id})" class="ml-4 px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">
+                        삭제
+                      </button>
+                    </div>
+                  </div>
+                \`).join('')
+              }
+            </div>
+          </div>
+        \`;
+      } catch (error) {
+        console.error('Load articles error:', error);
+        alert('기사 목록을 불러오는데 실패했습니다.');
+      }
+    }
+    
+    function showAddArticleForm() {
+      document.getElementById('articlesContent').innerHTML = \`
+        <div class="bg-gray-50 p-6 rounded-lg">
+          <h3 class="text-xl font-bold mb-4">기사 추가</h3>
+          <form id="addArticleForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium mb-2">제목 *</label>
+              <input type="text" id="article_title" required class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">내용 *</label>
+              <textarea id="article_content" required rows="6" class="w-full px-4 py-2 border rounded-lg"></textarea>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">출처</label>
+              <input type="text" id="article_source" class="w-full px-4 py-2 border rounded-lg" placeholder="예: 한국일보">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">출처 링크 (URL)</label>
+              <input type="url" id="article_source_url" class="w-full px-4 py-2 border rounded-lg" placeholder="https://...">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">이미지 URL</label>
+              <input type="text" id="article_image" class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">카테고리</label>
+              <select id="article_category" class="w-full px-4 py-2 border rounded-lg">
+                <option value="general">일반</option>
+                <option value="pollution">해양 오염</option>
+                <option value="climate">기후 변화</option>
+                <option value="ecosystem">생태계</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-2">발행일</label>
+              <input type="date" id="article_date" class="w-full px-4 py-2 border rounded-lg">
+            </div>
+            <div class="flex space-x-4">
+              <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+              <button type="button" onclick="loadArticlesManager()" class="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700">취소</button>
+            </div>
+          </form>
+        </div>
+      \`;
+      
+      document.getElementById('addArticleForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = {
+          title: document.getElementById('article_title').value,
+          content: document.getElementById('article_content').value,
+          source: document.getElementById('article_source').value,
+          source_url: document.getElementById('article_source_url').value,
+          image_url: document.getElementById('article_image').value,
+          category: document.getElementById('article_category').value,
+          published_date: document.getElementById('article_date').value
+        };
+        
+        try {
+          await axios.post('/api/admin/crisis-articles', data);
+          alert('기사가 추가되었습니다!');
+          loadArticlesManager();
+        } catch (error) {
+          console.error('Add article error:', error);
+          alert('기사 추가 중 오류가 발생했습니다.');
+        }
+      });
+    }
+    
+    async function deleteArticle(id) {
+      if (!confirm('이 기사를 삭제하시겠습니까?')) return;
+      
+      try {
+        await axios.delete('/api/admin/crisis-articles/' + id);
+        alert('기사가 삭제되었습니다!');
+        loadArticlesManager();
+      } catch (error) {
+        console.error('Delete article error:', error);
+        alert('기사 삭제 중 오류가 발생했습니다.');
+      }
+    }
+    
+    // ============================================
+    // Company Info Manager  
+    // ============================================
+    
+    async function loadCompanyInfoManager() {
+      try {
+        const response = await axios.get('/api/company-info');
+        const { info } = response.data;
+        
+        document.getElementById('tab-content').innerHTML = \`
+          <div class="bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-2xl font-bold mb-6">회사 소개 관리</h2>
+            <div class="space-y-6">
+              \${info.map(item => \`
+                <div class="border rounded-lg p-4">
+                  <h3 class="text-lg font-semibold mb-3">\${item.title || item.section}</h3>
+                  <form id="form-\${item.section}" class="space-y-3">
+                    <div>
+                      <label class="block text-sm font-medium mb-2">제목</label>
+                      <input type="text" id="title-\${item.section}" value="\${item.title || ''}" class="w-full px-4 py-2 border rounded-lg">
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium mb-2">내용 *</label>
+                      <textarea id="content-\${item.section}" rows="4" class="w-full px-4 py-2 border rounded-lg">\${item.content}</textarea>
+                    </div>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+                  </form>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        \`;
+        
+        // Add event listeners
+        info.forEach(item => {
+          document.getElementById('form-' + item.section).addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+              title: document.getElementById('title-' + item.section).value,
+              content: document.getElementById('content-' + item.section).value
+            };
+            
+            try {
+              await axios.put('/api/admin/company-info/' + item.section, data);
+              alert('회사 정보가 업데이트되었습니다!');
+            } catch (error) {
+              console.error('Update company info error:', error);
+              alert('회사 정보 업데이트 중 오류가 발생했습니다.');
+            }
+          });
+        });
+      } catch (error) {
+        console.error('Load company info error:', error);
+        alert('회사 정보를 불러오는데 실패했습니다.');
       }
     }
     
