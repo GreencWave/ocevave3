@@ -1041,6 +1041,10 @@ const baseLayout = (title: string, content: string, customCss = '', customJs = '
         <nav class="hidden md:flex space-x-8">
           <div class="nav-item relative">
             <a href="/crisis" class="text-gray-700 hover:text-gray-900">해양 위기</a>
+            <div class="nav-dropdown">
+              <a href="/crisis" class="block px-4 py-2 hover:bg-gray-50">위기 현황</a>
+              <a href="/crisis/articles" class="block px-4 py-2 hover:bg-gray-50">위기 기사</a>
+            </div>
           </div>
           <div class="nav-item relative">
             <a href="/shop" class="text-gray-700 hover:text-gray-900">구매</a>
@@ -1345,6 +1349,110 @@ app.get('/about', (c) => {
         </div>
       </div>
     </div>
+  `));
+});
+
+// Crisis articles page
+app.get('/crisis/articles', async (c) => {
+  return c.html(baseLayout('위기 기사', `
+    <div class="ocean-gradient text-white py-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h1 class="text-5xl font-bold mb-6 fade-in">해양 위기 기사</h1>
+        <p class="text-xl fade-in">최신 해양 환경 관련 뉴스와 기사</p>
+      </div>
+    </div>
+    
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <div id="articlesContainer" class="text-center py-20">
+        <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <p class="mt-4 text-gray-600">기사를 불러오는 중...</p>
+      </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+    <script>
+      async function loadArticles() {
+        try {
+          const response = await axios.get('/api/crisis-articles');
+          const articles = response.data.articles || [];
+          
+          const container = document.getElementById('articlesContainer');
+          
+          if (articles.length === 0) {
+            container.innerHTML = \`
+              <div class="text-center py-20">
+                <i class="fas fa-newspaper text-6xl text-gray-300 mb-4"></i>
+                <p class="text-xl text-gray-600">등록된 기사가 없습니다.</p>
+              </div>
+            \`;
+            return;
+          }
+          
+          container.innerHTML = \`
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              \${articles.map(article => \`
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden hover-lift">
+                  \${article.image_url ? \`
+                    <div class="h-48 overflow-hidden">
+                      <img src="\${article.image_url}" alt="\${article.title}" class="w-full h-full object-cover">
+                    </div>
+                  \` : \`
+                    <div class="h-48 bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center">
+                      <i class="fas fa-newspaper text-6xl text-white opacity-50"></i>
+                    </div>
+                  \`}
+                  <div class="p-6">
+                    <div class="flex items-center mb-3">
+                      <span class="px-3 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                        \${getCategoryName(article.category)}
+                      </span>
+                      <span class="ml-auto text-xs text-gray-500">\${formatDate(article.published_date)}</span>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">\${article.title}</h3>
+                    <p class="text-gray-600 text-sm mb-4 line-clamp-3">\${article.content}</p>
+                    \${article.source ? \`
+                      <p class="text-xs text-gray-500 mb-2">출처: \${article.source}</p>
+                    \` : ''}
+                    \${article.source_url ? \`
+                      <a href="\${article.source_url}" target="_blank" class="inline-flex items-center text-sm text-blue-600 hover:text-blue-800">
+                        기사 원문 보기
+                        <i class="fas fa-external-link-alt ml-2"></i>
+                      </a>
+                    \` : ''}
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          \`;
+        } catch (error) {
+          console.error('Load articles error:', error);
+          document.getElementById('articlesContainer').innerHTML = \`
+            <div class="text-center py-20">
+              <i class="fas fa-exclamation-triangle text-6xl text-red-500 mb-4"></i>
+              <p class="text-xl text-gray-600">기사를 불러오는데 실패했습니다.</p>
+            </div>
+          \`;
+        }
+      }
+      
+      function getCategoryName(category) {
+        const categories = {
+          'general': '일반',
+          'pollution': '해양 오염',
+          'climate': '기후 변화',
+          'ecosystem': '생태계'
+        };
+        return categories[category] || '일반';
+      }
+      
+      function formatDate(dateStr) {
+        if (!dateStr) return '날짜 미정';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('ko-KR');
+      }
+      
+      loadArticles();
+    </script>
   `));
 });
 
@@ -3231,8 +3339,12 @@ app.get('/admin', async (c) => {
               <input type="url" id="article_source_url" class="w-full px-4 py-2 border rounded-lg" placeholder="https://...">
             </div>
             <div>
-              <label class="block text-sm font-medium mb-2">이미지 URL</label>
-              <input type="text" id="article_image" class="w-full px-4 py-2 border rounded-lg">
+              <label class="block text-sm font-medium mb-2">이미지</label>
+              <div class="space-y-2">
+                <input type="file" id="article_image_file" accept="image/*" class="w-full px-4 py-2 border rounded-lg">
+                <input type="text" id="article_image_url" class="w-full px-4 py-2 border rounded-lg" placeholder="또는 이미지 URL 입력">
+                <div id="article_image_preview" class="mt-2"></div>
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium mb-2">카테고리</label>
@@ -3255,14 +3367,47 @@ app.get('/admin', async (c) => {
         </div>
       \`;
       
+      // Image file preview
+      document.getElementById('article_image_file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            document.getElementById('article_image_preview').innerHTML = '<img src="' + e.target.result + '" class="max-w-xs rounded-lg" />';
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+      
       document.getElementById('addArticleForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        
+        let imageUrl = document.getElementById('article_image_url').value;
+        
+        // Upload image file if selected
+        const imageFile = document.getElementById('article_image_file').files[0];
+        if (imageFile) {
+          const formData = new FormData();
+          formData.append('image', imageFile);
+          
+          try {
+            const uploadRes = await axios.post('/api/admin/upload-image', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            imageUrl = uploadRes.data.url;
+          } catch (error) {
+            console.error('Image upload error:', error);
+            alert('이미지 업로드 중 오류가 발생했습니다.');
+            return;
+          }
+        }
+        
         const data = {
           title: document.getElementById('article_title').value,
           content: document.getElementById('article_content').value,
           source: document.getElementById('article_source').value,
           source_url: document.getElementById('article_source_url').value,
-          image_url: document.getElementById('article_image').value,
+          image_url: imageUrl,
           category: document.getElementById('article_category').value,
           published_date: document.getElementById('article_date').value
         };
