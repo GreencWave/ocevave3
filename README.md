@@ -45,9 +45,9 @@ OCEVAVE는 해양 환경 보호를 위한 실질적인 행동을 이끄는 기�
 6. **관리자 시스템** ⭐ 완전 구현 + 이미지 업로드
    - 관리자 전용 페이지
    - 하드코딩된 관리자 계정
-   - **상품 관리**: 추가, 수정, 삭제 + **이미지 파일 업로드 (DB 저장)**
-   - **이벤트 관리**: 추가, 삭제 + **이미지 파일 업로드 (DB 저장)**
-   - **활동 관리**: 추가, 삭제 + **이미지 파일 업로드 (DB 저장)**
+   - **상품 관리**: 추가, 수정, 삭제 + **이미지 파일 업로드 (R2/DB 저장)**
+   - **이벤트 관리**: 추가, 삭제 + **이미지 파일 업로드 (R2/DB 저장)**
+   - **활동 관리**: 추가, 삭제 + **이미지 파일 업로드 (R2/DB 저장)**
    - **주문 관리**: 주문 목록 조회, **구매 상품 목록 표시** ⭐
    - **예약 관리**: 이벤트별 예약 목록 조회, 총 참가 인원 파악
    - **회원 관리**: 가입 회원 목록 조회, 관리자/일반 회원 구분
@@ -105,6 +105,7 @@ D1 데이터베이스 바인딩이 설정되어 있습니다:
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript, TailwindCSS
 - **Backend**: Hono (Cloudflare Workers)
 - **Database**: Cloudflare D1 (SQLite)
+- **Storage**: Cloudflare R2 (Object Storage) - 이미지 저장 (활성화 시)
 - **Deployment**: Cloudflare Pages
 - **Version Control**: Git & GitHub
 - **Process Management**: PM2
@@ -185,7 +186,10 @@ curl http://localhost:3000
 
 1. **상품 관리**
    - 상품 추가: 상품명, 설명, 가격, 재고 입력
-   - **이미지 업로드**: 파일 선택 (최대 5MB) 또는 URL 직접 입력
+   - **이미지 업로드**: 
+     - R2 활성화 시: 최대 50MB (대용량 이미지 지원)
+     - R2 미활성화 시: 최대 10MB (D1 데이터베이스 저장)
+     - 파일 선택 또는 URL 직접 입력 가능
    - **실시간 미리보기**: 이미지 선택 시 즉시 미리보기
    - 상품 수정: 기존 상품 정보 변경 (이미지 재업로드 가능)
    - 상품 삭제: 확인 후 삭제
@@ -193,7 +197,9 @@ curl http://localhost:3000
 
 2. **이벤트 관리**
    - 이벤트 추가: 제목, 내용, 일정, 장소 입력
-   - **이미지 업로드**: 파일 선택 또는 URL 입력
+   - **이미지 업로드**: 
+     - R2 활성화 시: 최대 50MB
+     - R2 미활성화 시: 최대 10MB
    - **실시간 미리보기**: 이미지 선택 시 즉시 미리보기
    - 이벤트 삭제: 확인 후 삭제
    - **저장 즉시 반영**: 이벤트 추가/삭제 시 이벤트 페이지에 즉시 반영
@@ -230,16 +236,50 @@ curl http://localhost:3000
    - 후원 상태: 활성/중단 표시
    - 신청일 확인
 
-### 이미지 업로드 기능
+### 이미지 업로드 기능 ⭐ R2 지원
 
-- ✅ **파일 선택**: 이미지 파일 직접 선택 (JPG, PNG, GIF 등)
-- ✅ **파일 크기 제한**: 최대 5MB
+- ✅ **파일 선택**: 이미지 파일 직접 선택 (JPG, PNG, GIF, WebP 등)
+- ✅ **대용량 지원**: 
+  - R2 활성화 시: 최대 50MB
+  - R2 미활성화 시: 최대 10MB (D1 데이터베이스)
 - ✅ **실시간 미리보기**: 업로드 전 미리보기
 - ✅ **URL 입력**: 파일 업로드 대신 URL 직접 입력 가능
-- ✅ **데이터베이스 저장**: 로컬 환경에서 base64로 DB에 안전하게 저장
-- ✅ **R2 스토리지**: Cloudflare R2에 안전하게 저장 (프로덕션)
+- ✅ **이중 저장 방식**:
+  - **우선순위 1**: Cloudflare R2 (Object Storage) - 대용량, 빠른 속도
+  - **폴백**: D1 데이터베이스 (base64 인코딩) - R2 미활성화 시
 - ✅ **자동 파일명**: timestamp + random string으로 고유한 파일명 생성
 - ✅ **즉시 반영**: 저장 후 구매/이벤트/활동 페이지에 즉시 반영
+- ✅ **CDN 캐싱**: 1년 캐시 정책으로 빠른 로딩 속도
+
+### R2 설정 방법
+
+R2를 활성화하여 대용량 이미지(최대 50MB)를 지원하세요:
+
+1. **Cloudflare Dashboard에서 R2 활성화**
+   - https://dash.cloudflare.com 접속
+   - R2 메뉴 → **Enable R2** 클릭
+   - 첫 10GB/월 무료
+
+2. **R2 버킷 생성**
+   ```bash
+   cd /home/user/webapp
+   npx wrangler r2 bucket create ocevave-images
+   ```
+
+3. **Cloudflare Pages에 R2 바인딩 추가**
+   - Dashboard → Pages → ocevave → Settings → Functions
+   - **R2 Bucket Bindings** 섹션
+   - Variable name: `R2`
+   - R2 bucket: `ocevave-images`
+   - **Save** → **Retry deployment**
+
+4. **재배포**
+   ```bash
+   npm run build
+   npx wrangler pages deploy dist --project-name ocevave
+   ```
+
+자세한 내용은 [R2_SETUP_GUIDE.md](./R2_SETUP_GUIDE.md)를 참조하세요.
 
 ## 배포
 

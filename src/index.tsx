@@ -707,9 +707,13 @@ app.post('/api/admin/upload-image', async (c) => {
       return c.json({ error: '이미지 파일만 업로드 가능합니다.' }, 400);
     }
     
-    // Check file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      return c.json({ error: '이미지 크기는 5MB 이하여야 합니다.' }, 400);
+    // Check file size (max 10MB for DB, unlimited for R2)
+    const maxSize = c.env.R2 ? 50 * 1024 * 1024 : 10 * 1024 * 1024; // 50MB for R2, 10MB for DB
+    if (file.size > maxSize) {
+      const maxSizeMB = Math.floor(maxSize / 1024 / 1024);
+      return c.json({ 
+        error: `이미지 크기는 ${maxSizeMB}MB 이하여야 합니다. (현재: ${(file.size / 1024 / 1024).toFixed(2)}MB)` 
+      }, 400);
     }
     
     // Generate unique filename
