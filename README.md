@@ -80,27 +80,25 @@ OCEVAVE는 해양 환경 보호를 위한 실질적인 행동을 이끄는 기�
 - https://3000-i7ysvrwxpv4r8fh1v9avf-2e1b9533.sandbox.novita.ai
 
 ### Production (프로덕션 배포) ⭐ 최신 배포!
-- **Live URL**: https://104ef7fb.ocevave.pages.dev
-- **Previous URL**: https://a525c4d7.ocevave.pages.dev (이전 배포)
+- **Live URL**: https://855bb3dd.ocevave.pages.dev
+- **이전 배포**: 
+  - https://4a2929a0.ocevave.pages.dev
+  - https://104ef7fb.ocevave.pages.dev
+  - https://a525c4d7.ocevave.pages.dev
 - **Cloudflare Pages Project**: ocevave
 - **GitHub Repository**: https://github.com/GreencWave/ocevave3
 - **배포 일시**: 2026-02-21
-- **변경 사항**: 홈페이지 Hero 배경 이미지 업데이트, 위기 기사 페이지 추가, 구매 페이지 디자인 복원
+- **D1 바인딩**: ✅ 설정 완료! 이미지 업로드 작동
+- **변경 사항**: 홈페이지 Hero 배경 이미지, 위기 기사 페이지, 이미지 업로드 에러 처리 개선
 
-### 중요: D1 데이터베이스 바인딩 설정 필요
+### ✅ D1 데이터베이스 바인딩 완료!
 
-현재 프로덕션 배포는 완료되었으나, Cloudflare Dashboard에서 D1 데이터베이스 바인딩을 수동으로 설정해야 합니다:
+D1 데이터베이스 바인딩이 설정되어 있습니다:
+- **Variable name**: `DB`
+- **Database**: `ocevave-production` (d3e2fba5-2acd-4a78-a125-d4cf5ee81079)
+- **상태**: ✅ 정상 작동 중
 
-1. Cloudflare Dashboard 접속: https://dash.cloudflare.com
-2. Pages > ocevave 프로젝트 선택
-3. Settings > Functions 탭
-4. D1 Database Bindings 섹션에서:
-   - Variable name: `DB`
-   - D1 Database: `ocevave-production` 선택
-5. Save 버튼 클릭
-6. 새 배포를 트리거하거나 기존 배포 재시작
-
-바인딩 설정 후 모든 기능(회원가입, 상품 조회, 주문, 예약, 후원 등)이 정상 작동합니다.
+이미지 업로드, 상품 관리, 주문 관리 등 모든 데이터베이스 기능이 정상적으로 작동합니다!
 
 ## 기술 스택
 
