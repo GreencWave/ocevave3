@@ -290,10 +290,11 @@ R2를 활성화하여 대용량 이미지(최대 50MB)를 지원하세요:
 
 #### 배포 정보
 - **프로젝트명**: ocevave
-- **Production URL**: https://a525c4d7.ocevave.pages.dev
+- **Production URL**: https://fabf91b6.ocevave.pages.dev
 - **D1 Database**: ocevave-production (d3e2fba5-2acd-4a78-a125-d4cf5ee81079)
 - **마이그레이션**: 모든 마이그레이션 적용 완료 (0001~0006)
 - **초기 데이터**: 시드 데이터 적용 완료
+- **R2 Storage**: 설정 가능 (R2_SETUP_GUIDE.md 참조)
 
 #### 배포 명령어
 ```bash
