@@ -1686,12 +1686,12 @@ app.get('/shop/donation', (c) => {
 app.get('/shop', async (c) => {
   return c.html(baseLayout('구매', `
     <div style="background-image: url('/static/images/shop-bg.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat; background-attachment: fixed; min-height: 100vh; position: relative;">
-      <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255, 255, 255, 0.88);"></div>
+      <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255, 255, 255, 0.5);"></div>
       
-      <div class="text-white py-20" style="position: relative; z-index: 1; background: linear-gradient(135deg, rgba(26, 77, 94, 0.4) 0%, rgba(17, 94, 89, 0.3) 100%);">
+      <div class="text-white py-20" style="position: relative; z-index: 1; background: linear-gradient(135deg, rgba(26, 77, 94, 0.2) 0%, rgba(17, 94, 89, 0.15) 100%);">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h1 class="text-5xl font-bold mb-6 fade-in" style="text-shadow: 2px 2px 8px rgba(0,0,0,0.5);">친환경 굿즈</h1>
-          <p class="text-xl fade-in" style="text-shadow: 1px 1px 4px rgba(0,0,0,0.5);">구매로 바다를 지키는 실천에 동참하세요</p>
+          <h1 class="text-5xl font-bold mb-6 fade-in" style="text-shadow: 3px 3px 10px rgba(0,0,0,0.8);">친환경 굿즈</h1>
+          <p class="text-xl fade-in" style="text-shadow: 2px 2px 6px rgba(0,0,0,0.8);">구매로 바다를 지키는 실천에 동참하세요</p>
         </div>
       </div>
       
