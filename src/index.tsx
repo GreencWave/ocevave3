@@ -1196,8 +1196,9 @@ const baseLayout = (title: string, content: string, customCss = '', customJs = '
 // Home page
 app.get('/', (c) => {
   return c.html(baseLayout('홈', `
-    <div class="hero-section ocean-gradient text-white flex items-center justify-center" style="height: 100vh;">
-      <div class="text-center fade-in">
+    <div class="hero-section text-white flex items-center justify-center" style="height: 100vh; background-image: url('/static/images/ocean-hero-bg.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat; position: relative;">
+      <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(26, 77, 94, 0.7) 0%, rgba(17, 94, 89, 0.7) 100%);"></div>
+      <div class="text-center fade-in" style="position: relative; z-index: 1;">
         <h1 class="text-5xl md:text-7xl font-bold mb-6">OCEVAVE</h1>
         <p class="text-2xl md:text-3xl mb-12">바다의 미래를 다시 씁니다</p>
         <a href="#intro" class="inline-block">
