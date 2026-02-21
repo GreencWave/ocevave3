@@ -80,16 +80,16 @@ OCEVAVE는 해양 환경 보호를 위한 실질적인 행동을 이끄는 기�
 - https://3000-i7ysvrwxpv4r8fh1v9avf-2e1b9533.sandbox.novita.ai
 
 ### Production (프로덕션 배포) ⭐ 최신 배포!
-- **Live URL**: https://855bb3dd.ocevave.pages.dev
+- **Live URL**: https://122eac0f.ocevave.pages.dev
 - **이전 배포**: 
+  - https://855bb3dd.ocevave.pages.dev
   - https://4a2929a0.ocevave.pages.dev
   - https://104ef7fb.ocevave.pages.dev
-  - https://a525c4d7.ocevave.pages.dev
 - **Cloudflare Pages Project**: ocevave
 - **GitHub Repository**: https://github.com/GreencWave/ocevave3
 - **배포 일시**: 2026-02-21
 - **D1 바인딩**: ✅ 설정 완료! 이미지 업로드 작동
-- **변경 사항**: 홈페이지 Hero 배경 이미지, 위기 기사 페이지, 이미지 업로드 에러 처리 개선
+- **변경 사항**: wrangler.toml 추가, 모든 기능 정상 작동 확인
 
 ### ✅ D1 데이터베이스 바인딩 완료!
 
