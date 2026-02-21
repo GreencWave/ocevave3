@@ -721,9 +721,15 @@ app.post('/api/admin/upload-image', async (c) => {
     
     const { DB, R2 } = c.env;
     
+    // Check if DB is available
+    if (!DB) {
+      console.error('Database not available');
+      return c.json({ error: 'D1 데이터베이스가 설정되지 않았습니다. Cloudflare Dashboard에서 DB 바인딩을 설정해주세요.' }, 500);
+    }
+    
     // Try to upload to R2 (production)
-    try {
-      if (R2) {
+    if (R2) {
+      try {
         const arrayBuffer = await file.arrayBuffer();
         await R2.put(key, arrayBuffer, {
           httpMetadata: {
@@ -733,28 +739,33 @@ app.post('/api/admin/upload-image', async (c) => {
         
         const imageUrl = `/api/images/${filename}`;
         return c.json({ success: true, url: imageUrl });
+      } catch (r2Error) {
+        console.log('R2 upload failed, falling back to database storage:', r2Error);
       }
-    } catch (r2Error) {
-      console.log('R2 not available, using database storage');
     }
     
-    // For local development: store in database as base64
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    // Store in database as base64
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Data = btoa(binary);
+      
+      // Store in database
+      await DB.prepare(`
+        INSERT INTO images (filename, data, content_type)
+        VALUES (?, ?, ?)
+      `).bind(filename, base64Data, file.type).run();
+      
+      const imageUrl = `/api/images/${filename}`;
+      return c.json({ success: true, url: imageUrl });
+    } catch (dbError) {
+      console.error('Database storage error:', dbError);
+      return c.json({ error: '이미지 저장 중 오류가 발생했습니다.' }, 500);
     }
-    const base64Data = btoa(binary);
-    
-    // Store in database
-    await DB.prepare(`
-      INSERT INTO images (filename, data, content_type)
-      VALUES (?, ?, ?)
-    `).bind(filename, base64Data, file.type).run();
-    
-    const imageUrl = `/api/images/${filename}`;
-    return c.json({ success: true, url: imageUrl });
     
   } catch (error) {
     console.error('Upload image error:', error);
@@ -770,9 +781,9 @@ app.get('/api/images/:filename', async (c) => {
     
     const { DB, R2 } = c.env;
     
-    // Try R2 first (production)
-    try {
-      if (R2) {
+    // Try R2 first (production with R2)
+    if (R2) {
+      try {
         const object = await R2.get(key);
         
         if (object) {
@@ -782,37 +793,45 @@ app.get('/api/images/:filename', async (c) => {
           
           return new Response(object.body, { headers });
         }
+      } catch (r2Error) {
+        console.log('R2 get failed, trying database:', r2Error);
       }
-    } catch (r2Error) {
-      console.log('R2 not available, trying database');
     }
     
-    // For local development: get from database
-    const image = await DB.prepare('SELECT data, content_type FROM images WHERE filename = ?')
-      .bind(filename)
-      .first() as { data: string; content_type: string } | null;
+    // Get from database
+    if (!DB) {
+      return c.text('Database not configured', 500);
+    }
     
-    if (image) {
-      // Decode base64
-      const binaryString = atob(image.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+    try {
+      const image = await DB.prepare('SELECT data, content_type FROM images WHERE filename = ?')
+        .bind(filename)
+        .first() as { data: string; content_type: string } | null;
+      
+      if (image) {
+        // Decode base64
+        const binaryString = atob(image.data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        const headers = new Headers();
+        headers.set('Content-Type', image.content_type);
+        headers.set('Cache-Control', 'public, max-age=31536000');
+        
+        return new Response(bytes.buffer, { headers });
       }
-      
-      const headers = new Headers();
-      headers.set('Content-Type', image.content_type);
-      headers.set('Cache-Control', 'public, max-age=31536000');
-      
-      return new Response(bytes, { headers });
+    } catch (dbError) {
+      console.error('Database image fetch error:', dbError);
     }
     
     // Image not found
-    return c.notFound();
+    return c.text('Image not found', 404);
     
   } catch (error) {
     console.error('Get image error:', error);
-    return c.notFound();
+    return c.text('Error retrieving image', 500);
   }
 });
 
