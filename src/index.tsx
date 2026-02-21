@@ -1685,8 +1685,9 @@ app.get('/shop/donation', (c) => {
 
 app.get('/shop', async (c) => {
   return c.html(baseLayout('구매', `
-    <div class="ocean-gradient text-white py-20">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+    <div class="text-white py-20" style="background-image: url('/static/images/shop-bg.jpg'); background-size: cover; background-position: center; background-repeat: no-repeat; position: relative;">
+      <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(26, 77, 94, 0.75) 0%, rgba(17, 94, 89, 0.75) 100%);"></div>
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center" style="position: relative; z-index: 1;">
         <h1 class="text-5xl font-bold mb-6 fade-in">친환경 굿즈</h1>
         <p class="text-xl fade-in">구매로 바다를 지키는 실천에 동참하세요</p>
       </div>
