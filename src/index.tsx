@@ -727,7 +727,7 @@ app.post('/api/admin/upload-image', async (c) => {
       return c.json({ error: 'R2 스토리지가 설정이 안되어 있습니다.'}, 500);
     }
 
-    const arraybuffer = await file.arrayBuffer();
+    const arrayBuffer = await file.arrayBuffer();
     await R2.put(key, arrayBuffer, {
       httpMetadata: { contentType: file.type },
     });
