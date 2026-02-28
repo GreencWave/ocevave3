@@ -697,24 +697,23 @@ app.post('/api/admin/upload-image', async (c) => {
   try {
     const formData = await c.req.formData();
     const file = formData.get('image') as File;
+    const { DB, R2 } = c.env;
+
+    if (!file) return c.json({ error: '이미지 파일이 없습니다.'}, 400);
+    if (!file.type.startsWith('image/')) return c.json({ error: '이미지 파일만 업로드 가능합니다.'}, 400);
+
     
-    if (!file) {
-      return c.json({ error: '이미지 파일이 없습니다.' }, 400);
-    }
-    
-    // Check file type
-    if (!file.type.startsWith('image/')) {
-      return c.json({ error: '이미지 파일만 업로드 가능합니다.' }, 400);
-    }
     
     // Check file size (max 10MB for DB, unlimited for R2)
-    const maxSize = c.env.R2 ? 50 * 1024 * 1024 : 10 * 1024 * 1024; // 50MB for R2, 10MB for DB
-    if (file.size > maxSize) {
-      const maxSizeMB = Math.floor(maxSize / 1024 / 1024);
-      return c.json({ 
-        error: `이미지 크기는 ${maxSizeMB}MB 이하여야 합니다. (현재: ${(file.size / 1024 / 1024).toFixed(2)}MB)` 
-      }, 400);
-    }
+    const maxSize = 25 * 1024 * 1024;
+    if (file.size > maxSize) return c.json({ error: '파일 크기가 너무 커요! (최대 25MB)  업로드 가능합니다.'}, 400);
+    
+    // if (file.size > maxSize) {
+    //   const maxSizeMB = Math.floor(maxSize / 1024 / 1024);
+    //   return c.json({ 
+    //     error: `이미지 크기는 ${maxSizeMB}MB 이하여야 합니다. (현재: ${(file.size / 1024 / 1024).toFixed(2)}MB)` 
+    //   }, 400);
+    // }
     
     // Generate unique filename
     const timestamp = Date.now();
@@ -723,53 +722,47 @@ app.post('/api/admin/upload-image', async (c) => {
     const filename = `${timestamp}-${randomStr}.${ext}`;
     const key = `images/${filename}`;
     
-    const { DB, R2 } = c.env;
-    
-    // Check if DB is available
-    if (!DB) {
-      console.error('Database not available');
-      return c.json({ error: 'D1 데이터베이스가 설정되지 않았습니다. Cloudflare Dashboard에서 DB 바인딩을 설정해주세요.' }, 500);
+    if (!R2) {
+      return c.json({ error: 'R2 스토리지가 설정이 안되어 있습니다.'}, 500);
     }
-    
-    // Try to upload to R2 (production)
-    if (R2) {
-      try {
-        const arrayBuffer = await file.arrayBuffer();
-        await R2.put(key, arrayBuffer, {
-          httpMetadata: {
-            contentType: file.type,
-          },
-        });
-        
-        const imageUrl = `/api/images/${filename}`;
-        return c.json({ success: true, url: imageUrl });
-      } catch (r2Error) {
-        console.log('R2 upload failed, falling back to database storage:', r2Error);
-      }
+
+    const arrbuffer = await file.arrayBuffer();
+    await R2.put(key, arrayBuffer, {
+      httpMetadata: { contentType: file.type },
+    });
+
+    if (DB) {
+      await DB.prepare(`INSERT INTO images (filename, content_type, created_at) VALUES (?, ?, ?)`).bind(filename, file.type, timestamp).run();
     }
+
+    return c.json({
+      success: true,
+      url: `/api/images/${filename}`,
+      filename: filename
+    });
     
-    // Store in database as base64
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Data = btoa(binary);
+    // // Store in database as base64
+    // try {
+    //   const arrayBuffer = await file.arrayBuffer();
+    //   const bytes = new Uint8Array(arrayBuffer);
+    //   let binary = '';
+    //   for (let i = 0; i < bytes.byteLength; i++) {
+    //     binary += String.fromCharCode(bytes[i]);
+    //   }
+    //   const base64Data = btoa(binary);
       
-      // Store in database
-      await DB.prepare(`
-        INSERT INTO images (filename, data, content_type)
-        VALUES (?, ?, ?)
-      `).bind(filename, base64Data, file.type).run();
+    //   // Store in database
+    //   await DB.prepare(`
+    //     INSERT INTO images (filename, data, content_type)
+    //     VALUES (?, ?, ?)
+    //   `).bind(filename, base64Data, file.type).run();
       
-      const imageUrl = `/api/images/${filename}`;
-      return c.json({ success: true, url: imageUrl });
-    } catch (dbError) {
-      console.error('Database storage error:', dbError);
-      return c.json({ error: '이미지 저장 중 오류가 발생했습니다.' }, 500);
-    }
+    //   const imageUrl = `/api/images/${filename}`;
+    //   return c.json({ success: true, url: imageUrl });
+    // } catch (dbError) {
+    //   console.error('Database storage error:', dbError);
+    //   return c.json({ error: '이미지 저장 중 오류가 발생했습니다.' }, 500);
+    // }
     
   } catch (error) {
     console.error('Upload image error:', error);
@@ -779,65 +772,21 @@ app.post('/api/admin/upload-image', async (c) => {
 
 // Serve images from R2 or database
 app.get('/api/images/:filename', async (c) => {
-  try {
-    const filename = c.req.param('filename');
-    const key = `images/${filename}`;
-    
-    const { DB, R2 } = c.env;
-    
-    // Try R2 first (production with R2)
-    if (R2) {
-      try {
-        const object = await R2.get(key);
-        
-        if (object) {
-          const headers = new Headers();
-          headers.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg');
-          headers.set('Cache-Control', 'public, max-age=31536000');
-          
-          return new Response(object.body, { headers });
-        }
-      } catch (r2Error) {
-        console.log('R2 get failed, trying database:', r2Error);
-      }
-    }
-    
-    // Get from database
-    if (!DB) {
-      return c.text('Database not configured', 500);
-    }
-    
-    try {
-      const image = await DB.prepare('SELECT data, content_type FROM images WHERE filename = ?')
-        .bind(filename)
-        .first() as { data: string; content_type: string } | null;
-      
-      if (image) {
-        // Decode base64
-        const binaryString = atob(image.data);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        const headers = new Headers();
-        headers.set('Content-Type', image.content_type);
-        headers.set('Cache-Control', 'public, max-age=31536000');
-        
-        return new Response(bytes.buffer, { headers });
-      }
-    } catch (dbError) {
-      console.error('Database image fetch error:', dbError);
-    }
-    
-    // Image not found
-    return c.text('Image not found', 404);
-    
-  } catch (error) {
-    console.error('Get image error:', error);
-    return c.text('Error retrieving image', 500);
-  }
-});
+  const filename = c.req.param('filename');
+  const key = `images/${filename}`;
+  const { R2 } = c.env;
+
+  if (!R2) return c.text('Storage not configured', 500);
+
+  const obj = await R2.get(key);
+  if (!obj) return c.text('Image not found', 404);
+
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set('Cache-control', 'public max-age=31536000');
+
+  return new Response(obj.body, { headers });
+});;
 
 
 app.post('/api/admin/events', async (c) => {
