@@ -703,20 +703,9 @@ app.post('/api/admin/upload-image', async (c) => {
     if (!file) return c.json({ error: '이미지 파일이 없습니다.'}, 400);
     if (!file.type.startsWith('image/')) return c.json({ error: '이미지 파일만 업로드 가능합니다.'}, 400);
 
-    
-    
-    // Check file size (max 10MB for DB, unlimited for R2)
     const maxSize = 25 * 1024 * 1024;
     if (file.size > maxSize) return c.json({ error: '파일 크기가 너무 커요! (최대 25MB)  업로드 가능합니다.'}, 400);
-    
-    // if (file.size > maxSize) {
-    //   const maxSizeMB = Math.floor(maxSize / 1024 / 1024);
-    //   return c.json({ 
-    //     error: `이미지 크기는 ${maxSizeMB}MB 이하여야 합니다. (현재: ${(file.size / 1024 / 1024).toFixed(2)}MB)` 
-    //   }, 400);
-    // }
-    
-    // Generate unique filename
+  
     const timestamp = Date.now();
     const randomStr = Math.random().toString(36).substring(2, 8);
     const ext = file.name.split('.').pop() || 'jpg';
@@ -738,7 +727,6 @@ app.post('/api/admin/upload-image', async (c) => {
       } catch (dbErr) {
         console.error("DB INSERT ERROR", dbErr);
       }
-      // await DB.prepare(`INSERT INTO images (filename, content_type, created_at) VALUES (?, ?, ?)`).bind(filename, file.type, timestamp).run();
     }
 
     return c.json({
@@ -746,29 +734,6 @@ app.post('/api/admin/upload-image', async (c) => {
       url: `/api/images/${filename}`,
       filename: filename
     });
-    
-    // // Store in database as base64
-    // try {
-    //   const arrayBuffer = await file.arrayBuffer();
-    //   const bytes = new Uint8Array(arrayBuffer);
-    //   let binary = '';
-    //   for (let i = 0; i < bytes.byteLength; i++) {
-    //     binary += String.fromCharCode(bytes[i]);
-    //   }
-    //   const base64Data = btoa(binary);
-      
-    //   // Store in database
-    //   await DB.prepare(`
-    //     INSERT INTO images (filename, data, content_type)
-    //     VALUES (?, ?, ?)
-    //   `).bind(filename, base64Data, file.type).run();
-      
-    //   const imageUrl = `/api/images/${filename}`;
-    //   return c.json({ success: true, url: imageUrl });
-    // } catch (dbError) {
-    //   console.error('Database storage error:', dbError);
-    //   return c.json({ error: '이미지 저장 중 오류가 발생했습니다.' }, 500);
-    // }
     
   } catch (error) {
     console.error('Upload image error:', error);
