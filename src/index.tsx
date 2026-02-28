@@ -2578,7 +2578,7 @@ app.get('/admin', async (c) => {
             });
             imageUrl = uploadResponse.data.url;
           } catch (error) {
-            console.error('Upload error:', error);
+            console.error('Upload error:', error.message);
             alert('이미지 업로드에 실패했습니다.');
             return;
           }
