@@ -697,27 +697,22 @@ app.post('/api/admin/upload-image', async (c) => {
   
   try {
     const formData = await c.req.formData();
-    const file = formData.get('image') as File;
+    const file = formData.get('image'); // 'as File' 제거 (안정성)
     const { DB, R2 } = c.env;
 
-    if (!file) return c.json({ error: '이미지 파일이 없습니다.'}, 400);
-    if (!file.type.startsWith('image/')) return c.json({ error: '이미지 파일만 업로드 가능합니다.'}, 400);
+    if (!file || !(file instanceof File)) return c.json({ error: '파일이 유효하지 않습니다.'}, 400);
+    if (!R2) return c.json({ error: 'R2 바인딩 설정(이름: R2)을 확인해주세요.'}, 500);
 
-    const maxSize = 25 * 1024 * 1024;
-    if (file.size > maxSize) return c.json({ error: '파일 크기가 너무 커요! (최대 25MB)  업로드 가능합니다.'}, 400);
-  
     const timestamp = Date.now();
-    const randomStr = Math.random().toString(36).substring(2, 8);
     const ext = file.name.split('.').pop() || 'jpg';
-    const filename = `${timestamp}-${randomStr}.${ext}`;
+    const filename = `${timestamp}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
     const key = `images/${filename}`;
-    
-    if (!R2) {
-      return c.json({ error: 'R2 스토리지가 설정이 안되어 있습니다.'}, 500);
-    }
 
+    // 파일을 바이너리로 변환
     const arrayBuffer = await file.arrayBuffer();
-    await R2.put(key, arrayBuffer, {
+    const uint8Array = new Uint8Array(arrayBuffer); // 좀 더 확실한 바이너리 변환
+
+    await R2.put(key, uint8Array, {
       httpMetadata: { contentType: file.type },
     });
 
@@ -725,7 +720,7 @@ app.post('/api/admin/upload-image', async (c) => {
       try {
         await DB.prepare(`INSERT INTO images (filename, content_type, created_at) VALUES (?, ?, ?)`).bind(filename, file.type, timestamp).run();
       } catch (dbErr) {
-        console.error("DB INSERT ERROR", dbErr);
+        console.error("DB 기록 실패(무시가능):", dbErr);
       }
     }
 
@@ -736,8 +731,7 @@ app.post('/api/admin/upload-image', async (c) => {
     });
     
   } catch (error) {
-    console.error('Upload image error:', error);
-    return c.json({ error: '이미지 업로드 중 오류가 발생했습니다.' + error.message }, 500);
+    return c.json({ error: `서버 에러: ${error.message}` }, 500);
   }
 });
 
@@ -757,7 +751,7 @@ app.get('/api/images/:filename', async (c) => {
   headers.set('Cache-control', 'public max-age=31536000');
 
   return new Response(obj.body, { headers });
-});;
+});
 
 
 app.post('/api/admin/events', async (c) => {
@@ -2438,7 +2432,8 @@ app.get('/admin', async (c) => {
     
     // Common function for image upload
     async function uploadImageFile(fileInputId) {
-      const imageFile = document.getElementById(fileInputId).files[0];
+      const fileInput = document.getElementById(fileInputId);
+      const imageFile = fileInput ? fileInput.files[0] : null;
       if (!imageFile) return null;
       
       const formData = new FormData();
@@ -2450,8 +2445,8 @@ app.get('/admin', async (c) => {
         });
         return uploadResponse.data.url;
       } catch (error) {
-        console.error('Upload error:', error);
-        throw new Error('이미지 업로드에 실패했습니다.');
+        console.error('Upload error details:', error.response?.data || error.message);
+        throw new Error('이미지 업로드 중 문제가 발생했습니다.');
       }
     }
     
