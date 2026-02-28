@@ -690,6 +690,7 @@ app.delete('/api/admin/products/:id', async (c) => {
 });
 
 // Image upload endpoint
+
 app.post('/api/admin/upload-image', async (c) => {
   const authError = requireAdmin(c);
   if (authError) return authError;
@@ -726,13 +727,18 @@ app.post('/api/admin/upload-image', async (c) => {
       return c.json({ error: 'R2 스토리지가 설정이 안되어 있습니다.'}, 500);
     }
 
-    const arrbuffer = await file.arrayBuffer();
+    const arraybuffer = await file.arrayBuffer();
     await R2.put(key, arrayBuffer, {
       httpMetadata: { contentType: file.type },
     });
 
     if (DB) {
-      await DB.prepare(`INSERT INTO images (filename, content_type, created_at) VALUES (?, ?, ?)`).bind(filename, file.type, timestamp).run();
+      try {
+        await DB.prepare(`INSERT INTO images (filename, content_type, created_at) VALUES (?, ?, ?)`).bind(filename, file.type, timestamp).run();
+      } catch (dbErr) {
+        console.error("DB INSERT ERROR", dbErr);
+      }
+      // await DB.prepare(`INSERT INTO images (filename, content_type, created_at) VALUES (?, ?, ?)`).bind(filename, file.type, timestamp).run();
     }
 
     return c.json({
@@ -766,7 +772,7 @@ app.post('/api/admin/upload-image', async (c) => {
     
   } catch (error) {
     console.error('Upload image error:', error);
-    return c.json({ error: '이미지 업로드 중 오류가 발생했습니다.' }, 500);
+    return c.json({ error: '이미지 업로드 중 오류가 발생했습니다.' + error.message }, 500);
   }
 });
 
